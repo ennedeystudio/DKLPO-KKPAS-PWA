@@ -975,7 +975,7 @@ html:nth-of-type(1) > body:nth-of-type(1) > div.page.active:nth-of-type(7) > div
 <!-- Comment -->
 <div class="card-mobile">
 <label data-ms="Komen Keseluruhan" data-en="General Comment">Komen Keseluruhan</label>
-<textarea class="form-control" id="inspectComment" rows="3" placeholder="Komen keseluruhan... / General comments..." oninput="saveDraft()"></textarea>
+<textarea class="form-control" id="inspectComment" rows="3" placeholder="Komen keseluruhan... / General comments..." oninput="scheduleDraftSave_()"></textarea>
 </div>
 
 <!-- AI Insight -->
@@ -1023,7 +1023,7 @@ html:nth-of-type(1) > body:nth-of-type(1) > div.page.active:nth-of-type(7) > div
 // ============================================
 // CONFIGURATION
 // ============================================
-const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbwHTRO_asLzBFhKwnolGE5egZ0zD3bHust69dROJMLJrwZw-gHNhNQm8u3IK_CbL5bj/exec";
+const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbwHTRO_asLzBFhKwnolGE5egZ0zD3bHust69dROJMLJrwZw-gHNhNQm8u3IK_CbL5bj/exec"; // URL backend pilihan pengguna
 const PHOTO_REVIEW_ACTION = "reviewPhoto";
 const MAX_PHOTO_KB = 250;
 const MAX_PHOTOS = 12;
@@ -1275,13 +1275,13 @@ const ZONE_MAP_MAX_SCALE = 4;
 // ============================================
 function setLanguage(lang) {
   currentLang = lang;
-  document.querySelectorAll('.lang-btn').forEach(btn => btn.classList.remove('active'));
+  if (!currentStation) inspectionLang = lang; // bahasa checklist dipilih sebelum mula('.lang-btn').forEach(btn => btn.classList.remove('active'));
   document.getElementById(`btn-${lang}`).classList.add('active');
   document.querySelectorAll(`[data-${lang}]`).forEach(el => {
     el.textContent = el.getAttribute(`data-${lang}`);
   });
   localStorage.setItem('dklpo_lang', lang);
-  if (currentStation) loadStation(currentStation);
+  // Kekalkan borang semasa: loadStation() memadam gambar, checklist dan submission ID.
 }
 
 function t(ms, en) {
@@ -1473,21 +1473,41 @@ function newSubmissionId_() {
   return 'SUB-' + Date.now() + '-' + Math.random().toString(36).slice(2,12);
 }
 
+async function buildUploadedPhotoMapForQueue_(previous, submissionId) {
+  const map = {...(previous && previous.uploadedPhotoMap || {})};
+  const legacy = Array.isArray(previous && previous.uploadedPhotoUrls) ? previous.uploadedPhotoUrls : [];
+  for (let i=0; i<photos.length; i++) {
+    const key = photoUploadKey_(submissionId, photos[i], i+1);
+    if (map[key] && map[key].url) continue;
+    const old = legacy[i];
+    // Legacy indexed receipts only apply when photo index is unchanged in a previous queue.
+    if (old && old.url && previous && previous.photos && previous.photos[i] &&
+        String(previous.photos[i].id) === String(photos[i].id)) map[key] = old;
+    else {
+      const saved = await getSavedPhotoReceipt_(submissionId, photos[i], i+1);
+      if (saved) map[key] = saved;
+    }
+  }
+  return map;
+}
+
 async function queueInspectionOffline_(basePayload) {
   const queueId = String(basePayload.clientSubmissionId || currentSubmissionId || newSubmissionId_());
   basePayload.clientSubmissionId = queueId;
+  const previous = await idbGet_('offlineQueue', queueId).catch(() => null);
   const record = {
     id: queueId,
     createdAt: new Date().toISOString(),
-    stationKey: `${session.month}-${currentTeam.code}-${currentStation}`,
+    stationKey: `${session.year || new Date().getFullYear()}-${session.month}-${currentTeam.code}-${currentStation}`,
     payload: basePayload,
     photos: photos.map((p, idx) => ({
       id:p.id, data:p.data, comment:p.comment||'', size:p.size||0, source:p.source||'', filename:p.filename||`photo_${idx+1}.jpg`,
       reviewAnalysis:p.reviewAnalysis||null, reviewAccepted:p.reviewAccepted||null, reviewedAt:p.reviewedAt||''
     })),
-    uploadedPhotoUrls: [],
+    uploadedPhotoUrls: Array.isArray(previous && previous.uploadedPhotoUrls) ? previous.uploadedPhotoUrls : [],
+    uploadedPhotoMap: await buildUploadedPhotoMapForQueue_(previous, queueId),
     status: 'QUEUED',
-    attempts: 0,
+    attempts: Number(previous && previous.attempts || 0),
     nextAttemptAt: '',
     lastError: ''
   };
@@ -1507,7 +1527,7 @@ async function getOfflineQueueCount_() {
 
 function isLikelyNetworkError_(err) {
   const msg=String(err&&err.message?err.message:err||'');
-  return !navigator.onLine || /Failed to fetch|NetworkError|Load failed|AbortError|CORS|timeout|timed out/i.test(msg);
+  return !navigator.onLine || /Failed to fetch|NetworkError|Load failed|AbortError|CORS|timeout|timed out|Tidak dapat berhubung dengan Apps Script|Unable to reach the Apps Script/i.test(msg);
 }
 
 function buildInspectionPayload_() {
@@ -1517,6 +1537,7 @@ function buildInspectionPayload_() {
     station: currentStation,
     inspectorName: session.inspectorName,
     teamCode: currentTeam.code,
+    year: session.year || new Date().getFullYear(),
     rating: currentRating,
     comment: document.getElementById('inspectComment').value,
     checklist: Object.entries(checklistData).map(([k, v]) => ({ item: k, status: v })),
@@ -1535,6 +1556,12 @@ function buildInspectionPayload_() {
   };
   payload.findings = JSON.stringify(Object.values(findingsDraft || {}));
   return payload;
+}
+
+let pendingDraftTimer_ = null;
+function scheduleDraftSave_() {
+  if (pendingDraftTimer_) clearTimeout(pendingDraftTimer_);
+  pendingDraftTimer_ = setTimeout(() => { pendingDraftTimer_=null; saveDraft(); }, 650);
 }
 
 function startAutoSave() {
@@ -1589,6 +1616,7 @@ function showAutoSaveIndicator(state = 'saving') {
   if (text) text.textContent = t('Menyimpan...', 'Saving...');
 }
 
+let kkpasDraftWriteChain_ = Promise.resolve();
 async function saveDraft() {
   if (!currentStation || hasSubmittedCurrent) return;
   showAutoSaveIndicator('saving');
@@ -1607,24 +1635,26 @@ async function saveDraft() {
       session: session,
       inspectionLang: inspectionLang
     };
-    await idbPut_('drafts', draft);
+    kkpasDraftWriteChain_ = kkpasDraftWriteChain_.catch(()=>{}).then(()=>idbPut_('drafts', draft));
+    await kkpasDraftWriteChain_;
     try { sessionStorage.setItem('dklpo_draft_exists', String(draft.timestamp)); } catch (_) {}
     showAutoSaveIndicator('saved');
+    return true;
   } catch (e) {
     console.error('Draft save failed:', e);
     showAutoSaveIndicator('error');
     showToast(t('Draf gagal disimpan pada peranti.', 'Draft could not be saved on this device.'), 'warning');
+    return false;
   }
 }
 
 async function checkForDraft() {
   try {
     const data = await idbGet_('drafts', KKPAS_DRAFT_KEY);
-    if (data && Date.now() - Number(data.timestamp || 0) < 24 * 60 * 60 * 1000) {
+    if (data) {
       document.getElementById('draftModal').classList.add('active');
       return true;
     }
-    if (data) await idbDelete_('drafts', KKPAS_DRAFT_KEY);
   } catch (e) { console.warn('Draft check failed:', e); }
   return false;
 }
@@ -1636,6 +1666,12 @@ async function restoreDraft() {
   if (draft.session && !session) session = draft.session;
   if (draft.inspectionLang) inspectionLang = draft.inspectionLang;
   currentTeam = session && session.team ? session.team : currentTeam;
+  if(!currentTeam || !session){showToast(t('Sila log masuk sebelum memulihkan draf.', 'Login before restoring the draft.'), 'error');return;}
+  if(draft.session && (draft.session.team?.code !== session.team?.code ||
+      draft.session.month !== session.month || Number(draft.session.year||0)!==Number(session.year||0))){
+    showToast(t('Draf milik pasukan/bulan/tahun lain.', 'Draft belongs to another team/month/year.'),'error');
+    return;
+  }
   document.getElementById('pageLogin').classList.remove('active');
   document.getElementById('pageInspection').classList.add('active');
   document.getElementById('btnLogout').style.display = 'block';
@@ -1679,6 +1715,7 @@ async function discardDraft() {
 }
 
 async function clearDraft() {
+  await kkpasDraftWriteChain_.catch(()=>{});
   await idbDelete_('drafts', KKPAS_DRAFT_KEY).catch(()=>{});
   try { sessionStorage.removeItem('dklpo_draft_exists'); } catch (_) {}
   stopAutoSave();
@@ -1827,6 +1864,7 @@ session = {
     team: currentTeam,
     inspectorName: inspectorName,
     month: month,
+    year: new Date().getFullYear(),
     loginTime: Date.now(),
     expiry: Date.now() + (30 * 24 * 60 * 60 * 1000)
   };
@@ -1846,16 +1884,20 @@ const btn = document.getElementById('btnLogin');
 completeLogin();
 }
 
-function completeLogin() {
+async function completeLogin() {
   localStorage.setItem('dklpo_mobile_session', JSON.stringify(session));
   showToast(t('Log masuk berjaya', 'Login successful'), 'success');
-  showInspectionPage();
+  const hasDraft = await checkForDraft();
+  if (!hasDraft) showInspectionPage();
 }
 
 async function doLogout(options = {}) {
   const ask = options.confirm !== false;
   if (!ask || confirm(t('Pasti untuk keluar?', 'Confirm logout?'))) {
-    await clearDraft();
+    // Preserve latest comments and image evidence when logging out.
+    if (pendingDraftTimer_) {clearTimeout(pendingDraftTimer_);pendingDraftTimer_=null;}
+    await saveDraft();
+    await kkpasDraftWriteChain_.catch(()=>{});
     localStorage.removeItem('dklpo_mobile_session');
     session = null;
     currentTeam = null;
@@ -1890,7 +1932,7 @@ if (assigned.length === 0) {
 const stationSelect = document.getElementById('stationSelect');
   stationSelect.innerHTML = `<option value="">-- ${t('Pilih Stesen', 'Select Station')} --</option>`;
 
-const availableStations = assigned.filter(st => !submittedStations.has(`${session.month}-${currentTeam.code}-${st}`));
+const availableStations = assigned.filter(st => !submittedStations.has(`${session.year || new Date().getFullYear()}-${session.month}-${currentTeam.code}-${st}`));
 
 if (availableStations.length === 0) {
     showToast(t('Semua stesen telah diperiksa!', 'All stations completed!'), 'success');
@@ -1926,7 +1968,7 @@ function getAssignedStationsForTeam(team, month) {
 
 function loadStation(station) {
   // Check if station already submitted
-  const stationKey = `${session.month}-${currentTeam.code}-${station}`;
+  const stationKey = `${session.year || new Date().getFullYear()}-${session.month}-${currentTeam.code}-${station}`;
   if (submittedStations.has(stationKey)) {
     showToast(t('Stesen ini telah diperiksa', 'This station has been inspected'), 'error');
     return;
@@ -2277,7 +2319,7 @@ function updatePhotoComment(photoId, comment) {
   if (photo) {
     photo.comment = comment;
     if (photo.reviewAccepted) photo.reviewAccepted.comment = false;
-    saveDraft();
+    scheduleDraftSave_();
   }
 }
 
@@ -2480,7 +2522,7 @@ function acceptAllReviewSuggestions(photoId) {
 function renderPhotoList() {
   const container=document.getElementById('photoListContainer');
   if(photos.length===0){container.innerHTML='';updatePhotoSummary();return;}
-  container.innerHTML=photos.map((photo,index)=>`<div class="photo-item" data-id="${photo.id}"><div class="photo-item-header"><span class="photo-number">${index+1}</span><span style="font-size:12px;color:var(--text-secondary);">${photo.source==='camera'?'📷':'🖼️'} ${formatFileSize(photo.size)}</span>${photo.reviewAnalysis?`<span class="review-badge" style="margin-left:8px;">✓ ${t('Disemak','Reviewed')}</span>`:''}<button class="photo-remove" onclick="removePhoto(${photo.id})">×</button></div><div class="photo-preview"><img src="${photo.data}" alt="Photo ${index+1}"></div><div class="photo-comment"><label>${t('Komen untuk gambar ini','Comment for this image')}:</label><textarea placeholder="${t('Masukkan komen...','Enter comment...')}" onchange="updatePhotoComment(${photo.id}, this.value)">${escapeHtml(photo.comment||'')}</textarea></div>${renderPhotoReview(photo)}</div>`).join('');
+  container.innerHTML=photos.map((photo,index)=>`<div class="photo-item" data-id="${photo.id}"><div class="photo-item-header"><span class="photo-number">${index+1}</span><span style="font-size:12px;color:var(--text-secondary);">${photo.source==='camera'?'📷':'🖼️'} ${formatFileSize(photo.size)}</span>${photo.reviewAnalysis?`<span class="review-badge" style="margin-left:8px;">✓ ${t('Disemak','Reviewed')}</span>`:''}<button class="photo-remove" onclick="removePhoto(${photo.id})">×</button></div><div class="photo-preview"><img src="${photo.data}" alt="Photo ${index+1}"></div><div class="photo-comment"><label>${t('Komen untuk gambar ini','Comment for this image')}:</label><textarea placeholder="${t('Masukkan komen...','Enter comment...')}" oninput="updatePhotoComment(${photo.id}, this.value)">${escapeHtml(photo.comment||'')}</textarea></div>${renderPhotoReview(photo)}</div>`).join('');
   updatePhotoSummary();
 }
 
@@ -2589,7 +2631,7 @@ if (!currentRating) {
     return;
   }
 
-const stationKey = `${session.month}-${currentTeam.code}-${currentStation}`;
+const stationKey = `${session.year || new Date().getFullYear()}-${session.month}-${currentTeam.code}-${currentStation}`;
   if (submittedStations.has(stationKey)) {
     showToast(t('Stesen ini telah diperiksa', 'This station already inspected'), 'error');
     return;
@@ -2608,12 +2650,22 @@ const totalItems = document.querySelectorAll('.status-select').length;
     const gpsNow = await requireGps_('submit');
     if (!gpsNow.ok) return;
     const offlinePayload = buildInspectionPayload_();
-    await queueInspectionOffline_(offlinePayload);
-    showOfflineQueuedSuccessModal_();
+    try {
+      await queueInspectionOffline_(offlinePayload);
+      showOfflineQueuedSuccessModal_();
+    } catch (offlineError) {
+      console.error('Offline queue save failed:', offlineError);
+      showToast(t('Pemeriksaan tidak berjaya disimpan offline. Jangan tutup halaman.', 'Inspection was not saved offline. Do not close this page.'), 'error');
+    }
     return;
   }
 
-isSubmitting = true;
+// Persist all photos and the submission ID before the first network request.
+  if (!(await saveDraft())) {
+    showToast(t('Tidak dapat menyimpan gambar pada peranti. Jangan tutup halaman.', 'Could not save photos on this device. Keep this page open.'), 'error');
+    return;
+  }
+  isSubmitting = true;
   hasSubmittedCurrent = true;
   const btn = document.getElementById('btnSubmit');
   btn.disabled = true;
@@ -2662,8 +2714,8 @@ payload.photos = photoUrls;
 if (result.ok) {
       submittedStations.add(stationKey);
       localStorage.setItem('dklpo_submitted_stations', JSON.stringify([...submittedStations]));
-      clearDraft();
-      sessionStorage.setItem('dklpo_just_submitted', 'true');
+      await clearDraft();
+      try { sessionStorage.setItem('dklpo_just_submitted', 'true'); } catch (_) {}
 
 // Show success modal instead of toast
       showSubmitSuccessModal(result);
@@ -2699,10 +2751,36 @@ if (result.ok) {
   }
 }
 
+function photoUploadKey_(submissionId, photo, index) {
+  const stableId = String(photo && photo.id != null ? photo.id : `legacy-${index}`).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 70);
+  return `${submissionId}-PHOTO-${stableId}`;
+}
+
+function photoReceiptKey_(submissionId, photo, index) {
+  return 'uploadReceipt:' + photoUploadKey_(submissionId, photo, index);
+}
+
+async function getSavedPhotoReceipt_(submissionId, photo, index) {
+  try {
+    const record = await idbGet_('kv', photoReceiptKey_(submissionId, photo, index));
+    return record && record.value && record.value.url ? record.value : null;
+  } catch (_) { return null; }
+}
+
+async function rememberPhotoReceipt_(submissionId, photo, index, response) {
+  const value = {url:response.url, fileId:response.fileId||'', resourceKey:response.resourceKey||''};
+  try { await idbPut_('kv', {key: photoReceiptKey_(submissionId, photo, index), value}); }
+  catch (err) { console.warn('Photo upload receipt not persisted; server uploadKey still protects retries',err); }
+  return value;
+}
+
 async function uploadPhotoWithRetry(photo, index, retries = 3) {
+  const submissionId = currentSubmissionId || (currentSubmissionId = newSubmissionId_());
+  const saved = await getSavedPhotoReceipt_(submissionId, photo, index);
+  if (saved) return {ok:true, ...saved, fromLocalReceipt:true};
   const payload = {
     action: 'uploadPhoto',
-    uploadKey: `${currentSubmissionId || (currentSubmissionId = newSubmissionId_())}-P${index}`,
+    uploadKey: photoUploadKey_(submissionId, photo, index),
     month: session.month,
     station: currentStation,
     inspectorName: session.inspectorName,
@@ -2716,6 +2794,7 @@ async function uploadPhotoWithRetry(photo, index, retries = 3) {
   if (!result || !result.ok) {
     throw new Error((result && result.error) || t(`Gagal upload gambar ${index}`, `Failed to upload photo ${index}`));
   }
+  await rememberPhotoReceipt_(submissionId, photo, index, result);
   return result;
 }
 
@@ -2812,7 +2891,7 @@ async function postToWebApp(payload, options = {}) {
 
 function nextStation() {
   const assigned = getAssignedStationsForTeam(currentTeam, session.month);
-  const availableStations = assigned.filter(st => !submittedStations.has(`${session.month}-${currentTeam.code}-${st}`));
+  const availableStations = assigned.filter(st => !submittedStations.has(`${session.year || new Date().getFullYear()}-${session.month}-${currentTeam.code}-${st}`));
   const currentIdx = availableStations.indexOf(currentStation);
   const nextStation = availableStations[currentIdx + 1];
 
