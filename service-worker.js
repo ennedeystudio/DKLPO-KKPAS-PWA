@@ -1,5 +1,5 @@
-const CACHE_NAME = 'kkpas-pwa-fasa1-2-20261028';
-const APP_SHELL = ['./', './manifest.json'];
+const CACHE_NAME = 'kkpas-pwa-gps-live-v3-20261029';
+const APP_SHELL = ['./', './index.html', './manifest.json'];
 const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbwHTRO_asLzBFhKwnolGE5egZ0zD3bHust69dROJMLJrwZw-gHNhNQm8u3IK_CbL5bj/exec'; // URL backend pilihan pengguna
 const DB_NAME = 'kkpas-offline-v1';
 const DB_VERSION = 3;
@@ -7,7 +7,7 @@ const MAX_SYNC_ATTEMPTS = 5;
 const RETRY_DELAYS_MS = [60*1000, 5*60*1000, 15*60*1000, 60*60*1000, 6*60*60*1000];
 
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(APP_SHELL)).catch(() => null));
+  event.waitUntil(caches.open(CACHE_NAME).then(cache => Promise.all(APP_SHELL.map(url => cache.add(url).catch(err => { console.warn('KKPAS app shell unavailable:', url, err); return null; })))).catch(() => null));
   self.skipWaiting();
 });
 
@@ -130,7 +130,7 @@ async function syncOne_(record){
     let receipt=map[uploadKey];
     if(!receipt && !record.uploadedPhotoMap && legacy[i] && legacy[i].url) receipt=legacy[i];
     if(!receipt || !receipt.url){
-      const r=await formPost_({action:'uploadPhoto',uploadKey,month:record.payload.month,station:record.payload.station,inspectorName:record.payload.inspectorName,base64:ph.data,comment:ph.comment||'',index:i+1,filename:ph.filename||`photo_${i+1}.jpg`});
+      const r=await formPost_({action:'uploadPhoto',teamCode:record.payload.teamCode,uploadKey,month:record.payload.month,station:record.payload.station,inspectorName:record.payload.inspectorName,base64:ph.data,comment:ph.comment||'',index:i+1,filename:ph.filename||`photo_${i+1}.jpg`});
       if(!r||!r.url) throw syncError_('UPLOAD_MISSING_URL',true);
       receipt={url:r.url,fileId:r.fileId||'',resourceKey:r.resourceKey||''};
       map[uploadKey]=receipt;
@@ -155,6 +155,14 @@ async function processQueue_(){
   let synced=0,failed=0,dead=0,skipped=0,needsRetry=false;
   for(const row of rows){
     if(!row||row.status==='DEAD_LETTER'){dead++;continue;}
+    if (!row.backendUrl || row.backendUrl !== WEB_APP_URL) {
+      row.status='NEEDS_BACKEND_REVIEW';
+      row.lastError='BACKEND_CHANGED: Offline submission originally queued for a different/unknown Apps Script URL; not sent to prevent misrouting.';
+      await putQueue_(row);
+      await broadcast_({type:'KKPAS_SYNC_BACKEND_REVIEW',station:row.payload&&row.payload.station,error:row.lastError});
+      skipped++;
+      continue;
+    }
     if(row.nextAttemptAt&&new Date(row.nextAttemptAt).getTime()>Date.now()){skipped++;needsRetry=true;continue;}
     try{
       const result=await syncOne_(row);
