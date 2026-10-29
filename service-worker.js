@@ -1,6 +1,6 @@
 const CACHE_NAME = 'kkpas-pwa-gps-live-v3-20261029';
 const APP_SHELL = ['./', './index.html', './manifest.json'];
-const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbwHTRO_asLzBFhKwnolGE5egZ0zD3bHust69dROJMLJrwZw-gHNhNQm8u3IK_CbL5bj/exec'; // URL backend pilihan pengguna
+const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbw_6-xWyxwq2ZM9ej6aFELsmthTx0izSnSNIRyp33DaTQ0kBCzih3ExIY9aI1w-tCJi/exec'; // URL backend pilihan pengguna
 const DB_NAME = 'kkpas-offline-v1';
 const DB_VERSION = 3;
 const MAX_SYNC_ATTEMPTS = 5;
