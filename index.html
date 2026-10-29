@@ -1688,7 +1688,7 @@ function updateNetworkStateUi_() {
   const chip = document.getElementById('networkStateChip');
   if (!chip) return;
   const online = navigator.onLine;
-  chip.textContent = online ? '● Online' : '● Offline';
+  chip.textContent = online ? t('● Peranti Online','● Device Online') : t('● Peranti Offline','● Device Offline');
   chip.classList.toggle('offline', !online);
 }
 
@@ -1705,7 +1705,8 @@ async function registerOfflineSync_() {
     if ('sync' in reg) {
       try { await reg.sync.register('kkpas-offline-sync'); } catch (_) {}
     }
-    if (reg.active) reg.active.postMessage({ type: 'SYNC_KKPAS_QUEUE' });
+    // Register while offline, but do not spend a retry attempt on a known outage.
+    if (navigator.onLine && reg.active) reg.active.postMessage({ type: 'SYNC_KKPAS_QUEUE' });
   } catch (e) { console.warn('Offline sync registration failed', e); }
 }
 
@@ -1732,7 +1733,7 @@ async function buildUploadedPhotoMapForQueue_(previous, submissionId) {
   return map;
 }
 
-async function queueInspectionOffline_(basePayload) {
+async function queueInspectionOffline_(basePayload, reason='offline') {
   const queueId = String(basePayload.clientSubmissionId || currentSubmissionId || newSubmissionId_());
   basePayload.clientSubmissionId = queueId;
   const previous = await idbGet_('offlineQueue', queueId).catch(() => null);
@@ -1758,7 +1759,9 @@ async function queueInspectionOffline_(basePayload) {
   localStorage.setItem('dklpo_submitted_stations', JSON.stringify([...submittedStations]));
   hasSubmittedCurrent = true;
   await registerOfflineSync_();
-  showSyncBanner_(t('Pemeriksaan disimpan offline dan akan dihantar apabila internet kembali.', 'Inspection saved offline and will sync when internet returns.'), 6000);
+  showSyncBanner_(reason==='offline'
+    ? t('Pemeriksaan disimpan pada peranti dan akan dihantar apabila rangkaian pulih.', 'Inspection saved on this device and will sync when the network returns.')
+    : t('Pelayan belum mengesahkan pemeriksaan. Salinan selamat pada peranti; cubaan semula dijadualkan.', 'The server has not confirmed the inspection. A copy is saved on this device for retry.'), 6000);
   return record;
 }
 
@@ -1767,8 +1770,16 @@ async function getOfflineQueueCount_() {
 }
 
 function isLikelyNetworkError_(err) {
-  const msg=String(err&&err.message?err.message:err||'');
-  return !navigator.onLine || /Failed to fetch|NetworkError|Load failed|AbortError|CORS|timeout|timed out|Tidak dapat berhubung dengan Apps Script|Unable to reach the Apps Script/i.test(msg);
+  return !!(err && err.isTransportError);
+}
+
+function backendResponseError_(result, fallback) {
+  const err = new Error(String(result && result.error || fallback));
+  err.serverResponse = true;
+  // An application rejection without an explicit retry flag needs a human check.
+  err.retryable = !!(result && result.retryable === true);
+  err.retryAfterMs = Number(result && result.retryAfterMs || 0);
+  return err;
 }
 
 function buildInspectionPayload_() {
@@ -2048,7 +2059,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 // Prevent accidental back button
   updateNetworkStateUi_();
-  window.addEventListener('online', async () => { updateNetworkStateUi_(); showSyncBanner_(t('Internet kembali. Menyegerakkan pemeriksaan offline...', 'Internet restored. Syncing offline inspections...')); await registerOfflineSync_(); refreshNotificationCentre_(false); });
+  window.addEventListener('online', async () => { updateNetworkStateUi_(); showSyncBanner_(t('Rangkaian peranti aktif. Mencuba semula penghantaran tertangguh...', 'Device network is online. Retrying pending submissions...')); await registerOfflineSync_(); refreshNotificationCentre_(false); });
   window.addEventListener('offline', () => { updateNetworkStateUi_(); showSyncBanner_(t('Offline: pemeriksaan masih boleh diteruskan dan akan disimpan pada peranti.', 'Offline: inspection can continue and will be stored on this device.'), 5000); });
   setTimeout(() => { refreshNotificationCentre_(false); registerPeriodicReminder_(); registerOfflineSync_(); }, 800);
 
@@ -2507,9 +2518,11 @@ function updateFindingField(keyEncoded, field, value) {
 }
 
 
-function showOfflineQueuedSuccessModal_() {
-  document.getElementById('successTitle').innerHTML = '📥 <span>' + t('Disimpan Offline','Saved Offline') + '</span>';
-  document.getElementById('successMsg').textContent = t('Pemeriksaan lengkap disimpan pada peranti. Ia akan dihantar automatik apabila internet tersedia.', 'The full inspection is stored on this device and will sync automatically when internet is available.');
+function showOfflineQueuedSuccessModal_(reason='offline') {
+  document.getElementById('successTitle').innerHTML = '📥 <span>' + t('Menunggu Penghantaran','Awaiting Submission') + '</span>';
+  document.getElementById('successMsg').textContent = reason==='offline'
+    ? t('Pemeriksaan disimpan pada peranti. Sistem akan mencuba lagi apabila rangkaian pulih.', 'Inspection saved on this device. The system will retry when the network returns.')
+    : t('Pelayan belum mengesahkan pemeriksaan walaupun peranti ada rangkaian. Salinan pada peranti akan dicuba semula.', 'The server has not confirmed the inspection. The copy on this device will be retried.');
   document.getElementById('successNext').style.display = '';
   document.getElementById('successNext').innerHTML = '<div style="background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3);border-radius:12px;padding:12px;color:var(--warn);font-size:13px;">' + t('Jangan padam data browser/app sebelum status sync berjaya.', 'Do not clear browser/app data before the sync succeeds.') + '</div>';
   document.getElementById('successModal').classList.add('active');
@@ -3025,8 +3038,8 @@ const totalItems = document.querySelectorAll('.status-select').length;
       const gpsNow = await requireGps_('submit');
       if (!gpsNow.ok) return;
       const offlinePayload = buildInspectionPayload_();
-      await queueInspectionOffline_(offlinePayload);
-      showOfflineQueuedSuccessModal_();
+      await queueInspectionOffline_(offlinePayload, 'offline');
+      showOfflineQueuedSuccessModal_('offline');
     } catch (offlineError) {
       console.error('Offline queue save failed:', offlineError);
       showToast(t('Pemeriksaan gagal disimpan offline. Draf masih ada; jangan padam data browser.',
@@ -3034,7 +3047,7 @@ const totalItems = document.querySelectorAll('.status-select').length;
     } finally {
       isSubmitting = false;
       offlineBtn.disabled = hasSubmittedCurrent;
-      offlineBtn.textContent = hasSubmittedCurrent ? t('✓ Menunggu Sync','✓ Awaiting Sync') : t('🚀 Hantar Pemeriksaan','🚀 Submit Inspection');
+      offlineBtn.textContent = hasSubmittedCurrent ? t('✓ Menunggu Penghantaran','✓ Awaiting Submission') : t('🚀 Hantar Pemeriksaan','🚀 Submit Inspection');
     }
     return;
   }
@@ -3109,11 +3122,11 @@ if (result.ok) {
     hasSubmittedCurrent = false;
     if (String(err && err.message) === 'GPS_REQUIRED') {
       showToast(t('GPS diperlukan. Sila hidupkan GPS/Location.', 'GPS is required. Please enable GPS/Location.'), 'error');
-    } else if (isLikelyNetworkError_(err)) {
+    } else if (isLikelyNetworkError_(err) || (err && err.retryable === true)) {
       try {
         const offlinePayload = payload || buildInspectionPayload_();
-        await queueInspectionOffline_(offlinePayload);
-        showOfflineQueuedSuccessModal_();
+        await queueInspectionOffline_(offlinePayload, 'server');
+        showOfflineQueuedSuccessModal_('server');
       } catch (queueErr) {
         showToast(t('Gagal menyimpan offline: ' + queueErr.message, 'Failed to save offline: ' + queueErr.message), 'error');
       }
@@ -3173,9 +3186,7 @@ async function uploadPhotoWithRetry(photo, index, retries = 3) {
   };
 
   const result = await postToWebApp(payload, { timeoutMs: 90000, retries });
-  if (!result || !result.ok) {
-    throw new Error((result && result.error) || t(`Gagal upload gambar ${index}`, `Failed to upload photo ${index}`));
-  }
+  if (!result || !result.ok) throw backendResponseError_(result, t(`Gagal upload gambar ${index}`, `Failed to upload photo ${index}`));
   await rememberPhotoReceipt_(submissionId, photo, index, result);
   return result;
 }
@@ -3189,7 +3200,7 @@ async function submitWithRetry(payload, retries = 3) {
   }, { timeoutMs: 90000, retries });
 
   if (result && result.ok) return result;
-  throw new Error((result && result.error) || t('Gagal hantar laporan.', 'Failed to submit report.'));
+  throw backendResponseError_(result, t('Gagal hantar laporan.', 'Failed to submit report.'));
 }
 
 async function postToWebApp(payload, options = {}) {
@@ -3225,19 +3236,24 @@ async function postToWebApp(payload, options = {}) {
         data = rawText ? JSON.parse(rawText) : null;
       } catch (parseErr) {
         const snippet = String(rawText || '').replace(/\s+/g, ' ').trim().slice(0, 180);
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${snippet || 'Non-JSON response'}`);
-        }
-        throw new Error(
+        const error = new Error(!response.ok ? `HTTP ${response.status}: ${snippet || 'Non-JSON response'}` :
           t(
-            'Respons pelayan bukan JSON. Semak deployment Apps Script, akses web app, atau authorization. Ringkasan respons: ' + (snippet || 'kosong'),
-            'Server response was not JSON. Check Apps Script deployment, web app access, or authorization. Response preview: ' + (snippet || 'empty')
+            'Respons pelayan DKLPO bukan JSON. Semak gateway dan deployment backend. Ringkasan respons: ' + (snippet || 'kosong'),
+            'DKLPO server response was not JSON. Check the gateway and backend deployment. Response preview: ' + (snippet || 'empty')
           )
         );
+        error.serverResponse = true;
+        error.retryable = response.status === 429 || response.status >= 500;
+        error.httpStatus = response.status;
+        throw error;
       }
 
       if (!response.ok) {
-        throw new Error((data && data.error) || `HTTP ${response.status}`);
+        const error = backendResponseError_(data, `HTTP ${response.status}`);
+        error.retryable = data && typeof data.retryable === 'boolean'
+          ? data.retryable : response.status === 429 || response.status >= 500;
+        error.httpStatus = response.status;
+        throw error;
       }
 
       if (data && data.ok === false && data.retryable && attempt < retries) {
@@ -3251,15 +3267,24 @@ async function postToWebApp(payload, options = {}) {
       clearTimeout(timeoutId);
       lastError = err;
       const msg = String(err && err.message ? err.message : err);
+      if (!err.serverResponse && (err.name === 'TypeError' || err.name === 'AbortError' ||
+          /Failed to fetch|NetworkError|Load failed|CORS|timeout|timed out/i.test(msg))) {
+        err.isTransportError = true;
+        err.retryable = true;
+      }
+      if (err.serverResponse && !err.retryable) throw err;
 
       if (attempt >= retries) {
-        if (/Failed to fetch|NetworkError|Load failed|CORS/i.test(msg)) {
-          throw new Error(
+        if (err.isTransportError) {
+          const connectionError = new Error(
             t(
-              'Tidak dapat berhubung dengan Apps Script. Semak URL web app, deployment access = Anyone, dan pastikan frontend guna application/x-www-form-urlencoded.',
-              'Unable to reach the Apps Script web app. Check the web app URL, deployment access = Anyone, and make sure the frontend uses application/x-www-form-urlencoded.'
+              'Pelayan DKLPO tidak dapat dicapai: ' + msg,
+              'DKLPO server could not be reached: ' + msg
             )
           );
+          connectionError.isTransportError = true;
+          connectionError.retryable = true;
+          throw connectionError;
         }
         throw err;
       }
@@ -3340,21 +3365,32 @@ async function appendOfflineQueueStatusToNotificationCentre_(){
   const dead=rows.filter(r=>r.status==='DEAD_LETTER');
   const items=rows.map(r=>{
     const station=escapeHtml(r.payload&&r.payload.station||'-');
-    const status=r.status==='DEAD_LETTER'?t('PERLU TINDAKAN','ACTION REQUIRED'):t('Menunggu Sync','Waiting for Sync');
-    const detail=r.status==='DEAD_LETTER'
-      ? `<div style="color:var(--bad);font-size:12px;margin-top:5px;">${escapeHtml(r.lastError||'Sync failed')}</div><button class="btn-secondary" style="margin-top:8px;padding:9px 12px;" onclick="retryOfflineQueueItem_('${escapeHtml(r.id)}')">↻ ${t('Cuba Semula','Retry')}</button>`
-      : `<div style="font-size:12px;color:var(--text-secondary);margin-top:5px;">${t('Percubaan','Attempts')}: ${Number(r.attempts||0)}/5${r.nextAttemptAt?` · ${escapeHtml(r.nextAttemptAt)}`:''}</div>`;
-    return `<div class="notification-team"><b>${station} — ${status}</b>${detail}</div>`;
+    const kind=r.type==='ADHOC_V13'?t('Laporan NCR/CAR/PAR','NCR/CAR/PAR Report'):t('Pemeriksaan','Inspection');
+    const status=r.status==='DEAD_LETTER'?t('PERLU TINDAKAN','ACTION REQUIRED')
+      : ['SYNCING','DIRECT_SENDING'].includes(r.status)?t('Sedang dihantar','Sending')
+      : t('Menunggu penghantaran','Awaiting submission');
+    const retryTime=r.nextAttemptAt?new Date(r.nextAttemptAt):null;
+    const when=retryTime&&!Number.isNaN(retryTime.getTime())
+      ? ` · ${t('Cuba lagi','Retry at')}: ${escapeHtml(retryTime.toLocaleString(currentLang==='ms'?'ms-MY':'en-GB'))}` : '';
+    const error=r.lastError?`<div style="color:var(--warn);font-size:12px;margin-top:5px;overflow-wrap:anywhere;">${t('Ralat terakhir','Last error')}: ${escapeHtml(r.lastError)}</div>`:'';
+    const busy=(r.status==='DIRECT_SENDING'&&Number(r.leaseUntil||0)>Date.now())
+      ||(r.status==='SYNCING'&&Date.now()-new Date(r.lastAttemptAt||0).getTime()<120000);
+    const retry=busy?'':`<button class="btn-secondary" style="margin-top:8px;padding:9px 12px;" onclick="retryOfflineQueueItem_('${escapeHtml(r.id)}')">↻ ${t('Cuba hantar sekarang','Try sending now')}</button>`;
+    const detail=`<div style="font-size:12px;color:var(--text-secondary);margin-top:5px;">${t('Percubaan','Attempts')}: ${Number(r.attempts||0)}/5${when}</div>${error}${retry}`;
+    return `<div class="notification-team"><b>${kind}: ${station} — ${status}</b>${detail}</div>`;
   }).join('');
-  body.insertAdjacentHTML('afterbegin',`<div class="notification-item"><div class="date">${t('Offline Sync Queue','Offline Sync Queue')}</div><b>${queued.length} ${t('menunggu','waiting')} · ${dead.length} ${t('perlu tindakan','need action')}</b>${items}</div>`);
+  body.insertAdjacentHTML('afterbegin',`<div class="notification-item"><div class="date">${t('Barisan Penghantaran','Submission Queue')}</div><b>${queued.length} ${t('menunggu','waiting')} · ${dead.length} ${t('perlu tindakan','need action')}</b>${items}</div>`);
 }
 
 async function retryOfflineQueueItem_(id){
   try{
     const row=await idbGet_('offlineQueue',id); if(!row)return;
-    row.status='QUEUED'; row.attempts=0; row.nextAttemptAt=''; row.lastError=''; row.deadLetterAt='';
+    if((row.status==='DIRECT_SENDING'&&Number(row.leaseUntil||0)>Date.now())
+      ||(row.status==='SYNCING'&&Date.now()-new Date(row.lastAttemptAt||0).getTime()<120000))return;
+    if(row.status==='DEAD_LETTER')row.attempts=0;
+    row.status='QUEUED'; row.nextAttemptAt=''; row.deadLetterAt=''; row.leaseUntil=0;
     await idbPut_('offlineQueue',row);
-    showSyncBanner_(t('Rekod dimasukkan semula ke queue.','Record returned to the sync queue.'),4000);
+    showSyncBanner_(t('Cubaan penghantaran dimulakan.','Submission retry started.'),4000);
     await registerOfflineSync_();
     await refreshNotificationCentre_(false);
   }catch(e){showToast(t('Gagal menetapkan retry.','Failed to schedule retry.'),'error');}
@@ -3383,11 +3419,17 @@ async function refreshNotificationCentre_(showErrors=true){
       if(data&&data.ok){localStorage.setItem('kkpas_notification_cache',JSON.stringify(data));}
     }
     if(!data||!data.ok){const cached=localStorage.getItem('kkpas_notification_cache');if(cached)data=JSON.parse(cached);}
-    if(data){renderNotificationCentre_(data);await appendOfflineQueueStatusToNotificationCentre_();maybeShowLocalReminder_(data);}
+    renderNotificationCentre_(data||{reminder:{active:false},notifications:[]});
+    await appendOfflineQueueStatusToNotificationCentre_();
+    if(data)maybeShowLocalReminder_(data);
   }catch(e){
     const cached=localStorage.getItem('kkpas_notification_cache');
     if(cached){try{renderNotificationCentre_(JSON.parse(cached));await appendOfflineQueueStatusToNotificationCentre_();}catch(_){} }
-    else if(showErrors) showToast(t('Notification Centre tidak dapat dikemas kini.','Notification Centre could not be refreshed.'),'warning');
+    else {
+      renderNotificationCentre_({reminder:{active:false},notifications:[]});
+      await appendOfflineQueueStatusToNotificationCentre_();
+      if(showErrors) showToast(t('Peringatan pelayan tidak dapat dikemas kini; status penghantaran setempat dipaparkan.','Server reminders could not be refreshed; local submission status is shown.'),'warning');
+    }
   }
 }
 
@@ -3434,9 +3476,11 @@ navigator.serviceWorker?.addEventListener('message', (event) => {
     showSyncBanner_(t('Pemeriksaan offline berjaya disegerakkan: ','Offline inspection synced: ')+(d.station||''),5000);
     refreshNotificationCentre_(false);
   } else if(d.type==='KKPAS_SYNC_ERROR'){
-    showSyncBanner_(t(`Sync offline gagal (${d.attempts || 0}/5). Cubaan seterusnya dijadualkan.`,`Offline sync failed (${d.attempts || 0}/5). The next retry is scheduled.`),5000);
+    showSyncBanner_(t(`Penghantaran ${d.station||''} belum berjaya (${d.attempts||0}/5). Semak ralat dalam Pusat Notifikasi.`,`Submission for ${d.station||''} is pending (${d.attempts||0}/5). Check the Notification Centre for the error.`),5000);
+    refreshNotificationCentre_(false);
   } else if(d.type==='KKPAS_SYNC_DEAD_LETTER'){
-    showSyncBanner_(t(`Sync ${d.station || ''} dihentikan selepas ${d.attempts || 5} cubaan. Semakan manual diperlukan.`,`Sync for ${d.station || ''} stopped after ${d.attempts || 5} attempts. Manual review is required.`),9000);
+    showSyncBanner_(t(`Penghantaran ${d.station || ''} memerlukan tindakan. Semak sebab dalam Pusat Notifikasi.`,`Submission for ${d.station || ''} requires action. Check the Notification Centre for the reason.`),9000);
+    refreshNotificationCentre_(false);
   }
 });
 </script>
@@ -3694,8 +3738,11 @@ function adhocValidateV13_(p){
 // Save durable evidence first, then try an immediate online submission.
 // The service worker will retry only after a network/transient failure.
 function adhocLikelyPermanentV14_(error){
+  if(error && error.isTransportError)return false;
+  if(error && error.serverResponse)return error.retryable!==true;
+  if(error && error.retryable===false)return true;
   const text=String(error&&error.message||error||'');
-  return /INVALID_|PHOTO_NOT_|PHOTO_VERIFICATION_FAILED|Too many photos|Unknown action|NOT_ALLOWED|KONFIGURASI_BELUM_LENGKAP|INVALID_PHOTO_COUNT|Missing required/i.test(text);
+  return /INVALID_|PHOTO_NOT_|PHOTO_VERIFICATION_FAILED|Too many photos|Unknown action|NOT_ALLOWED|KONFIGURASI_BELUM_LENGKAP|INSPECTOR_AUTH_|INVALID_PHOTO_COUNT|Missing required/i.test(text);
 }
 async function adhocSendNowV14_(record, button){
   const uploaded=[];
@@ -3711,7 +3758,7 @@ async function adhocSendNowV14_(record, button){
         station:record.payload.station,month:MONTHS[new Date().getMonth()],
         index:i+1,base64:ph.data,comment:ph.comment||'',uploadKey:key
       },{timeoutMs:90000,retries:1});
-      if(!res||!res.ok||!res.fileId)throw new Error(res&&res.error||'Gagal muat naik gambar');
+      if(!res||!res.ok||!res.fileId)throw backendResponseError_(res,'Gagal muat naik gambar');
       receipt={fileId:res.fileId};
       receiptMap[key]=receipt;
       record.uploadedPhotoMap=receiptMap;
@@ -3723,7 +3770,7 @@ async function adhocSendNowV14_(record, button){
   const result=await postToWebApp({
     ...record.payload,action:'submitAdhocFinding',photos:JSON.stringify(uploaded)
   },{timeoutMs:90000,retries:1});
-  if(!result||!result.ok||!result.findingId)throw new Error(result&&result.error||'Gagal mengesahkan laporan');
+  if(!result||!result.ok||!result.findingId)throw backendResponseError_(result,'Gagal mengesahkan laporan');
   return result;
 }
 async function adhocSubmitV13_(){
@@ -3758,11 +3805,13 @@ async function adhocSubmitV13_(){
           await idbPut_('offlineQueue',record);
           throw new Error('Pelayan menolak laporan: '+record.lastError+'. Semak maklumat; gambar dan draf telah disimpan.');
         }
-        // Transient network errors should not discard the submitted evidence.
+        // Transient transport or server failures retain the submitted evidence.
         record.status='QUEUED';record.nextAttemptAt='';
         await idbPut_('offlineQueue',record);
         await registerOfflineSync_();
-        showToast('Sambungan terganggu. Laporan disimpan pada peranti untuk dihantar semula.','warning');
+        showToast(error && error.isTransportError
+          ? 'Pelayan DKLPO belum dapat dicapai. Laporan disimpan pada peranti untuk cubaan semula.'
+          : 'Pelayan belum mengesahkan laporan. Laporan disimpan pada peranti untuk cubaan semula.','warning');
         adhocClearV13_();
         return;
       }
