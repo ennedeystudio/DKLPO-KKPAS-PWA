@@ -1,4 +1,4 @@
-const CACHE_NAME = 'kkpas-pwa-v13-1-gps-live-unified-worker-adhoc-20261029';
+const CACHE_NAME = 'kkpas-pwa-v14-unified-20261030';
 const APP_SHELL = ['./', './index.html', './manifest.json'];
 const WEB_APP_URL = 'https://dklpo-pic-api.ennedeystudio.workers.dev'; // URL backend pilihan pengguna
 const DB_NAME = 'kkpas-offline-v1';
@@ -112,6 +112,9 @@ async function broadcast_(data){
 
 async function syncAdhocV13_(record){
   if(!record||record.status==='DEAD_LETTER')return {skipped:true};
+  if(record.nextAttemptAt&&new Date(record.nextAttemptAt).getTime()>Date.now())return {skipped:true};
+  if(record.status==='DIRECT_SENDING'&&Number(record.leaseUntil||0)>Date.now())return {skipped:true};
+  record.leaseUntil=0;
   record.attempts=Number(record.attempts||0)+1;
   record.status='SYNCING'; record.lastAttemptAt=new Date().toISOString();record.nextAttemptAt='';
   await putQueue_(record);
@@ -122,7 +125,7 @@ async function syncAdhocV13_(record){
     let receipt=map[key];
     if(!receipt||!receipt.fileId){
       const result=await formPost_({action:'uploadAdhocFindingPhoto',reporterName:record.payload.reporterName,
-        station:record.payload.station,index:i+1,base64:ph.data,comment:ph.comment||'',uploadKey:key});
+        station:record.payload.station,month:record.payload.month||['January','February','March','April','May','June','July','August','September','October','November','December'][new Date(record.createdAt||Date.now()).getMonth()],index:i+1,base64:ph.data,comment:ph.comment||'',uploadKey:key});
       if(!result.fileId)throw syncError_('ADHOC_UPLOAD_MISSING_FILE_ID',true);
       receipt={fileId:result.fileId};map[key]=receipt;record.uploadedPhotoMap=map;await putQueue_(record);
     }
@@ -131,7 +134,7 @@ async function syncAdhocV13_(record){
   const result=await formPost_({...record.payload,action:'submitAdhocFinding',photos:JSON.stringify(uploaded)});
   await deleteQueue_(record.id);
   await broadcast_({type:'KKPAS_ADHOC_SYNC_SUCCESS',station:record.payload.station,findingId:result.findingId||''});
-  try{await self.registration.showNotification('Laporan Pantas Berjaya',{body:'ID '+(result.findingId||'')+' • '+record.payload.station,tag:'adhoc-'+record.id,data:{url:'./'}})}catch(_){}
+  try{await self.registration.showNotification('Laporan NCR/CAR/PAR Berjaya',{body:'ID '+(result.findingId||'')+' • '+record.payload.station,tag:'adhoc-'+record.id,data:{url:'./'}})}catch(_){}
   return {ok:true};
 }
 
@@ -183,6 +186,9 @@ async function processQueue_(){
   for(const row of rows){
     if(!row||row.status==='DEAD_LETTER'){dead++;continue;}
     if(row.nextAttemptAt&&new Date(row.nextAttemptAt).getTime()>Date.now()){skipped++;needsRetry=true;continue;}
+    if(row.status==='DIRECT_SENDING'&&Number(row.leaseUntil||0)>Date.now()){
+      skipped++;needsRetry=true;continue;
+    }
     try{
       const result=await syncOne_(row);
       if(result&&result.ok)synced++;else skipped++;
