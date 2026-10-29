@@ -1,6 +1,6 @@
-const CACHE_NAME = 'kkpas-pwa-gps-live-v3-20261029';
+const CACHE_NAME = 'kkpas-pwa-v13-1-gps-live-unified-worker-adhoc-20261029';
 const APP_SHELL = ['./', './index.html', './manifest.json'];
-const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbw_6-xWyxwq2ZM9ej6aFELsmthTx0izSnSNIRyp33DaTQ0kBCzih3ExIY9aI1w-tCJi/exec'; // URL backend pilihan pengguna
+const WEB_APP_URL = 'https://dklpo-pic-api.ennedeystudio.workers.dev'; // URL backend pilihan pengguna
 const DB_NAME = 'kkpas-offline-v1';
 const DB_VERSION = 3;
 const MAX_SYNC_ATTEMPTS = 5;
@@ -109,7 +109,34 @@ async function broadcast_(data){
   clients.forEach(c=>c.postMessage(data));
 }
 
+
+async function syncAdhocV13_(record){
+  if(!record||record.status==='DEAD_LETTER')return {skipped:true};
+  record.attempts=Number(record.attempts||0)+1;
+  record.status='SYNCING'; record.lastAttemptAt=new Date().toISOString();record.nextAttemptAt='';
+  await putQueue_(record);
+  const photos=Array.isArray(record.photos)?record.photos:[];
+  const map={...(record.uploadedPhotoMap||{})}, uploaded=[];
+  for(let i=0;i<photos.length;i++){
+    const ph=photos[i],key=record.id+'-ADHOC-'+(i+1);
+    let receipt=map[key];
+    if(!receipt||!receipt.fileId){
+      const result=await formPost_({action:'uploadAdhocFindingPhoto',reporterName:record.payload.reporterName,
+        station:record.payload.station,index:i+1,base64:ph.data,comment:ph.comment||'',uploadKey:key});
+      if(!result.fileId)throw syncError_('ADHOC_UPLOAD_MISSING_FILE_ID',true);
+      receipt={fileId:result.fileId};map[key]=receipt;record.uploadedPhotoMap=map;await putQueue_(record);
+    }
+    uploaded.push({fileId:receipt.fileId,comment:ph.comment||''});
+  }
+  const result=await formPost_({...record.payload,action:'submitAdhocFinding',photos:JSON.stringify(uploaded)});
+  await deleteQueue_(record.id);
+  await broadcast_({type:'KKPAS_ADHOC_SYNC_SUCCESS',station:record.payload.station,findingId:result.findingId||''});
+  try{await self.registration.showNotification('Laporan Pantas Berjaya',{body:'ID '+(result.findingId||'')+' • '+record.payload.station,tag:'adhoc-'+record.id,data:{url:'./'}})}catch(_){}
+  return {ok:true};
+}
+
 async function syncOne_(record){
+  if(record && record.type==='ADHOC_V13')return syncAdhocV13_(record);
   if(!record||record.status==='DEAD_LETTER')return {skipped:true};
   if(record.nextAttemptAt&&new Date(record.nextAttemptAt).getTime()>Date.now())return {skipped:true};
   record.attempts=Number(record.attempts||0)+1;
@@ -137,7 +164,7 @@ async function syncOne_(record){
       record.uploadedPhotoMap=map;
       await putQueue_(record); // checkpoint immediately after each successful upload
     }
-    uploaded.push({...receipt,comment:ph.comment||'',index:i+1,reviewAnalysis:ph.reviewAnalysis||null,reviewAccepted:ph.reviewAccepted||null,reviewedAt:ph.reviewedAt||''});
+    uploaded.push({...receipt,comment:ph.comment||'',findingKey:ph.findingKey||'',index:i+1,reviewAnalysis:ph.reviewAnalysis||null,reviewAccepted:ph.reviewAccepted||null,reviewedAt:ph.reviewedAt||''});
   }
   record.uploadedPhotoUrls=uploaded;
   await putQueue_(record);
@@ -155,14 +182,6 @@ async function processQueue_(){
   let synced=0,failed=0,dead=0,skipped=0,needsRetry=false;
   for(const row of rows){
     if(!row||row.status==='DEAD_LETTER'){dead++;continue;}
-    if (!row.backendUrl || row.backendUrl !== WEB_APP_URL) {
-      row.status='NEEDS_BACKEND_REVIEW';
-      row.lastError='BACKEND_CHANGED: Offline submission originally queued for a different/unknown Apps Script URL; not sent to prevent misrouting.';
-      await putQueue_(row);
-      await broadcast_({type:'KKPAS_SYNC_BACKEND_REVIEW',station:row.payload&&row.payload.station,error:row.lastError});
-      skipped++;
-      continue;
-    }
     if(row.nextAttemptAt&&new Date(row.nextAttemptAt).getTime()>Date.now()){skipped++;needsRetry=true;continue;}
     try{
       const result=await syncOne_(row);
