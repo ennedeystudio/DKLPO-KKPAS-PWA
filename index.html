@@ -678,8 +678,7 @@ text-align: center;
 
 
 </style>
-<base target="_blank">
-<base target="_blank">
+
 <style id="ai-style-manual-css">
 /* Component Styles: manual-css */
 html:nth-of-type(1) > body:nth-of-type(1) > div.page.active:nth-of-type(7) > div.login-screen:nth-of-type(1) > div.main-content:nth-of-type(3) > div:nth-of-type(3) { text-align: center; margin-top: 16px; font-size: 13px; color: var(--text-secondary); }
@@ -906,7 +905,7 @@ html:nth-of-type(1) > body:nth-of-type(1) > div.page.active:nth-of-type(7) > div
 <button class="btn-submit" onclick="doLogin()" id="btnLogin">
 🔐 <span data-ms="Log Masuk" data-en="Login">Log Masuk</span>
 </button>
-<button type="button" class="btn-submit" id="btnAdhocOpenV13" style="background:linear-gradient(135deg,#ea580c,#b91c1c);margin-top:12px" onclick="adhocOpenV13_()">🚨 Lapor NCR / CAR / PAR Pantas (Tanpa Login)</button>
+<button type="button" class="btn-submit" id="btnAdhocOpenV13" style="background:linear-gradient(135deg,#ea580c,#b91c1c);margin-top:12px" onclick="adhocOpenV13_()">🚨 Lapor NCR / CAR / PAR (Tanpa Login)</button>
 
 <div style="text-align:center;margin-top:16px;font-size:13px;color:var(--text-secondary);">
 <span data-ms="Amalan Kerja Selamat Adalah Budaya Kita - V2.3" data-en="Safe Work Practices are Our Culture - V2.3">Versi 5.3.1</span></div>
@@ -1455,10 +1454,10 @@ const CHECKLIST_DATA = {
   ],
   en: [
     {sec:"Management", items:["Safety policy displayed","Training records updated","Permit To Work available","SOP followed"]},
-    {sec:"Housekeeping", items:["Pathways not obstructed","Floors not slippery","Adequate lighting","Clear signage"]},
+    {sec:"Housekeeping", items:["Pathways not obstructed","Floors not slippery","Adequate lighting","Clear signage","Floor condition safe (no slippery surfaces, holes or unsafe drain covers)","Hoses and cables arranged neatly","General workplace cleanliness maintained"]},
     {sec:"PPE", items:["PPE worn correctly","PPE in good condition & sufficient","Storage area tidy"]},
-    {sec:"Machinery", items:["Guarding complete","Emergency stop functional","No exposed parts","Lockout/Tagout followed"]},
-    {sec:"Electrical", items:["Panels locked","No damaged cables","Adequate grounding"]},
+    {sec:"Machinery", items:["Guarding complete","Emergency stop functional","No exposed parts","Lockout/Tagout followed","Physical condition of machinery is safe","Machine operators adequately trained"]},
+    {sec:"Electrical", items:["Panels locked","No damaged cables","Adequate grounding","Lockout/Tagout (LOTO) procedures followed","Electrical equipment in safe working condition"]},
     {sec:"Chemicals", items:["Properly labeled","SDS available","Safe storage"]},
     {sec:"Fire & Emergency", items:["Fire extinguisher sufficient, accessible, not expired","Fire extinguisher pressure within normal range","Path to hydrant/fire point not obstructed","Hose Reel and Fire Hydrant have adequate water pressure, no pipe leaks, water flows smoothly during testing","Evacuation plan & assembly point clear","First aid box complete (if applicable)"]},
     {sec:"Environment", items:["No uncontrolled leaks/discharge (effluent/biogas/chemical)","Spills handled properly","Drain/sump housekeeping good","Domestic waste disposed regularly and bins covered","Recyclables (paper, plastic, metal) sorted by category","Recyclables sorted by category (3R)","Scheduled Waste (SW) labeled, stored in proper containers, placed in dedicated storage (SW Store)"]}
@@ -3428,7 +3427,10 @@ if ('serviceWorker' in navigator) {
 <script>
 navigator.serviceWorker?.addEventListener('message', (event) => {
   const d=event.data||{};
-  if(d.type==='KKPAS_SYNC_SUCCESS'){
+  if(d.type==='KKPAS_ADHOC_SYNC_SUCCESS'){
+    showSyncBanner_(t('Laporan NCR/CAR/PAR berjaya dihantar: ','NCR/CAR/PAR report submitted: ')+(d.findingId||d.station||''),6500);
+    refreshNotificationCentre_(false);
+  } else if(d.type==='KKPAS_SYNC_SUCCESS'){
     showSyncBanner_(t('Pemeriksaan offline berjaya disegerakkan: ','Offline inspection synced: ')+(d.station||''),5000);
     refreshNotificationCentre_(false);
   } else if(d.type==='KKPAS_SYNC_ERROR'){
@@ -3540,8 +3542,8 @@ navigator.serviceWorker?.addEventListener('message', (event) => {
 
 <!-- V13 Ad-Hoc NCR/CAR/PAR; no inspector session and no monthly schedule changes -->
 <div class="page" id="pageAdhocV13">
-  <button type="button" class="logout-top" onclick="adhocCloseV13_()">← Kembali</button>
-  <div class="status-bar"><div class="title">🚨 Lapor Isu Pantas NCR / CAR / PAR</div></div>
+  <button type="button" class="logout-top" style="display:block" onclick="adhocCloseV13_()">← Kembali</button>
+  <div class="status-bar"><div class="title">🚨 Lapor Isu NCR / CAR / PAR</div></div>
   <div class="main-content">
     <div class="card-mobile"><p>Laporan bebas bagi mana-mana stesen, tanpa masuk pemeriksaan bulanan. Semua butiran akan dihantar untuk tindakan PIC dan pemantauan Admin.</p></div>
     <div class="card-mobile">
@@ -3581,7 +3583,7 @@ navigator.serviceWorker?.addEventListener('message', (event) => {
       <input type="file" id="adhocGalleryV13" accept="image/*" multiple style="display:none" onchange="adhocAddPhotosV13_(this)">
       <div id="adhocPhotoListV13"></div>
     </div>
-    <button type="button" class="btn-submit" id="adhocSubmitV13" onclick="adhocSubmitV13_()">🚨 Hantar Laporan Pantas</button>
+    <button type="button" class="btn-submit" id="adhocSubmitV13" onclick="adhocSubmitV13_()">🚨 Hantar Laporan</button>
   </div>
 </div>
 
@@ -3689,24 +3691,89 @@ function adhocValidateV13_(p){
  if(!adhocPhotosV13_.length)return 'Muat naik sekurang-kurangnya satu gambar';
  return '';
 }
+// Save durable evidence first, then try an immediate online submission.
+// The service worker will retry only after a network/transient failure.
+function adhocLikelyPermanentV14_(error){
+  const text=String(error&&error.message||error||'');
+  return /INVALID_|PHOTO_NOT_|PHOTO_VERIFICATION_FAILED|Too many photos|Unknown action|NOT_ALLOWED|KONFIGURASI_BELUM_LENGKAP|INVALID_PHOTO_COUNT|Missing required/i.test(text);
+}
+async function adhocSendNowV14_(record, button){
+  const uploaded=[];
+  const receiptMap=record.uploadedPhotoMap||{};
+  for(let i=0;i<record.photos.length;i++){
+    const ph=record.photos[i];
+    const key=record.id+'-ADHOC-'+(i+1);
+    let receipt=receiptMap[key];
+    if(!receipt||!receipt.fileId){
+      button.textContent='⏳ Gambar '+(i+1)+'/'+record.photos.length;
+      const res=await postToWebApp({
+        action:'uploadAdhocFindingPhoto',reporterName:record.payload.reporterName,
+        station:record.payload.station,month:MONTHS[new Date().getMonth()],
+        index:i+1,base64:ph.data,comment:ph.comment||'',uploadKey:key
+      },{timeoutMs:90000,retries:1});
+      if(!res||!res.ok||!res.fileId)throw new Error(res&&res.error||'Gagal muat naik gambar');
+      receipt={fileId:res.fileId};
+      receiptMap[key]=receipt;
+      record.uploadedPhotoMap=receiptMap;
+      await idbPut_('offlineQueue',record); // do not re-upload after restart
+    }
+    uploaded.push({fileId:receipt.fileId,comment:ph.comment||''});
+  }
+  button.textContent='⏳ Menghantar laporan...';
+  const result=await postToWebApp({
+    ...record.payload,action:'submitAdhocFinding',photos:JSON.stringify(uploaded)
+  },{timeoutMs:90000,retries:1});
+  if(!result||!result.ok||!result.findingId)throw new Error(result&&result.error||'Gagal mengesahkan laporan');
+  return result;
+}
 async function adhocSubmitV13_(){
- if(adhocBusyV13_)return;
- const p=adhocPayloadV13_(),problem=adhocValidateV13_(p);
- if(problem)return showToast(problem,'error');
- adhocBusyV13_=true;const btn=adhocGetV13_('adhocSubmitV13');btn.disabled=true;
- try{
-   localStorage.setItem('dklpo_adhoc_reporter_v13',p.reporterName);
-   
-   const record={id:p.clientSubmissionId,type:'ADHOC_V13',payload:p,
-     createdAt:new Date().toISOString(),photos:adhocPhotosV13_.map(x=>({...x})),
-     uploadedPhotoMap:{},status:'QUEUED',attempts:0,nextAttemptAt:'',lastError:''};
-   await idbPut_('offlineQueue',record);
-   await registerOfflineSync_();
-   showToast('Laporan disimpan dalam giliran sync PWA. Ia akan dihantar apabila sambungan tersedia.','success');
-   adhocClearV13_();
-
- }catch(e){showToast(e.message||'Gagal menghantar laporan','error');}
- finally{adhocBusyV13_=false;btn.disabled=false;btn.textContent='🚨 Hantar Laporan Pantas';}
+  if(adhocBusyV13_)return;
+  const p=adhocPayloadV13_(),problem=adhocValidateV13_(p);
+  if(problem)return showToast(problem,'error');
+  adhocBusyV13_=true;
+  const btn=adhocGetV13_('adhocSubmitV13');btn.disabled=true;
+  try{
+    localStorage.setItem('dklpo_adhoc_reporter_v13',p.reporterName);
+    const previouslySaved=await idbGet_('offlineQueue',p.clientSubmissionId);
+    const record=previouslySaved&&previouslySaved.type==='ADHOC_V13'?previouslySaved:{
+      id:p.clientSubmissionId,type:'ADHOC_V13',payload:p,
+      createdAt:new Date().toISOString(),photos:adhocPhotosV13_.map(x=>({...x})),
+      uploadedPhotoMap:{},status:'QUEUED',attempts:0,nextAttemptAt:'',lastError:''
+    };
+    if(navigator.onLine){
+      record.status='DIRECT_SENDING';record.leaseUntil=Date.now()+240000;
+      await idbPut_('offlineQueue',record);
+      try{
+        const result=await adhocSendNowV14_(record,btn);
+        await idbDelete_('offlineQueue',record.id);
+        showToast('Laporan berjaya dihantar: '+result.findingId,'success');
+        adhocClearV13_();
+        return;
+      }catch(error){
+        record.lastError=String(error&&error.message||error);
+        record.lastErrorAt=new Date().toISOString();
+        record.leaseUntil=0;
+        if(adhocLikelyPermanentV14_(error)){
+          record.status='DEAD_LETTER';record.nextAttemptAt='';
+          await idbPut_('offlineQueue',record);
+          throw new Error('Pelayan menolak laporan: '+record.lastError+'. Semak maklumat; gambar dan draf telah disimpan.');
+        }
+        // Transient network errors should not discard the submitted evidence.
+        record.status='QUEUED';record.nextAttemptAt='';
+        await idbPut_('offlineQueue',record);
+        await registerOfflineSync_();
+        showToast('Sambungan terganggu. Laporan disimpan pada peranti untuk dihantar semula.','warning');
+        adhocClearV13_();
+        return;
+      }
+    }
+    record.status='QUEUED';record.leaseUntil=0;
+    await idbPut_('offlineQueue',record);
+    await registerOfflineSync_();
+    showToast('Tiada internet. Laporan disimpan untuk dihantar apabila talian pulih.','warning');
+    adhocClearV13_();
+  }catch(e){showToast(e.message||'Gagal menghantar laporan','error');}
+  finally{adhocBusyV13_=false;btn.disabled=false;btn.textContent='🚨 Hantar Laporan';}
 }
 function adhocClearV13_(){
  adhocPhotosV13_=[];adhocIdV13_=newSubmissionId_();adhocRenderV13_();
