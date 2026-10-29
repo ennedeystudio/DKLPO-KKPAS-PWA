@@ -1,4 +1,4 @@
-const CACHE_NAME = 'kkpas-pwa-v14-unified-20261030';
+const CACHE_NAME = 'kkpas-pwa-v14-submission-status-20261030';
 const APP_SHELL = ['./', './index.html', './manifest.json'];
 const WEB_APP_URL = 'https://dklpo-pic-api.ennedeystudio.workers.dev'; // URL backend pilihan pengguna
 const DB_NAME = 'kkpas-offline-v1';
@@ -83,19 +83,26 @@ async function formPost_(payload){
     clearTimeout(timeoutId);
   }
   let data=null;
-  try{data=JSON.parse(text)}catch(_){throw syncError_('NON_JSON_RESPONSE',response.status>=500||response.status===429)}
+  try{data=JSON.parse(text)}catch(_){
+    throw syncError_('RESPONS_BUKAN_JSON (HTTP '+response.status+'): '+String(text||'').replace(/\s+/g,' ').slice(0,120),
+      response.status>=500||response.status===429);
+  }
   if(!response.ok||!data||!data.ok){
-    const retryable=(data&&typeof data.retryable==='boolean')?data.retryable:(response.status===429||response.status>=500);
+    const message=(data&&data.error)||('HTTP_'+response.status);
+    const retryable=(data&&typeof data.retryable==='boolean')?data.retryable:
+      response.status===429||response.status>=500||(response.ok&&!isKnownPermanentSyncMessage_(message));
     const retryAfterMs=(data&&data.retryAfterMs)||0;
-    throw syncError_((data&&data.error)||('HTTP_'+response.status),retryable,retryAfterMs);
+    throw syncError_(message,retryable,retryAfterMs);
   }
   return data;
 }
 
+function isKnownPermanentSyncMessage_(message){
+  return /Missing required|Unsupported image|Invalid base64|Empty image|Too many photos|Photo upload incomplete|GPS_(?:OUTSIDE|INVALID|STALE|LOW_INTEGRITY)|Station already inspected|INVALID_|PHOTO_NOT_|INSPECTOR_AUTH_|KONFIGURASI_BELUM_LENGKAP|Unknown action|NOT_ALLOWED/i.test(String(message||''));
+}
 function isPermanentSyncError_(err){
   if(err&&err.retryable===false)return true;
-  const msg=String(err&&err.message?err.message:err||'');
-  return /Missing required|Unsupported image|Invalid base64|Empty image|Too many photos|Photo upload incomplete|GPS_(?:OUTSIDE|INVALID|STALE|LOW_INTEGRITY)|Station already inspected|INVALID_SUBMISSION/i.test(msg);
+  return isKnownPermanentSyncMessage_(err&&err.message?err.message:err);
 }
 
 function nextRetryAt_(attempts,err){
