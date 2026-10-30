@@ -3719,7 +3719,7 @@ function adhocPayloadV13_(){return {
   type:adhocGetV13_('adhocTypeV13').value,
   severity:adhocGetV13_('adhocSeverityV13').value,
   itemKey:adhocGetV13_('adhocItemV13').value.trim(),
-  action:adhocGetV13_('adhocActionV13').value.trim(),
+  issueAction:adhocGetV13_('adhocActionV13').value.trim(),
   rootCause:adhocGetV13_('adhocRootV13').value.trim(),
   dueDate:adhocGetV13_('adhocDueV13').value,
   reportLat:adhocGpsV13_?String(adhocGpsV13_.lat):'',
@@ -3731,7 +3731,7 @@ function adhocValidateV13_(p){
  if(p.reporterName.length<2)return 'Isi nama sebenar pelapor';
  if(!p.station)return 'Pilih stesen';
  if(p.itemKey.length<3)return 'Isi kategori/item isu';
- if(p.action.length<5)return 'Isi keterangan/tindakan diperlukan';
+ if(p.issueAction.length<5)return 'Isi keterangan/tindakan diperlukan';
  if(!adhocPhotosV13_.length)return 'Muat naik sekurang-kurangnya satu gambar';
  return '';
 }
@@ -3768,7 +3768,7 @@ async function adhocSendNowV14_(record, button){
   }
   button.textContent='⏳ Menghantar laporan...';
   const result=await postToWebApp({
-    ...record.payload,action:'submitAdhocFinding',photos:JSON.stringify(uploaded)
+    ...record.payload,issueAction:record.payload.issueAction||record.payload.action||'',action:'submitAdhocFinding',photos:JSON.stringify(uploaded)
   },{timeoutMs:90000,retries:1});
   if(!result||!result.ok||!result.findingId)throw backendResponseError_(result,'Gagal mengesahkan laporan');
   return result;
