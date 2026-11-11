@@ -55,8 +55,8 @@ function dklpoDbRequest_(db, store, mode, method, value, key) {
 }
 
 const CACHE_PREFIX = 'kkpas-inspector-' + encodeURIComponent(self.registration.scope) + '-';
-const CACHE_NAME = CACHE_PREFIX + 'r5';
-const APP_SHELL = ['./', './index.html', './manifest.json'];
+const CACHE_NAME = CACHE_PREFIX + 'r7-227';
+const APP_SHELL = ['./', './index.html', './pemeriksaan-tempat-kerja-inspector.html', './manifest.json', './icons/icon-192.png', './icons/icon-512.png'];
 
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE_NAME).then(cache => Promise.all(
@@ -75,6 +75,7 @@ self.addEventListener('fetch', event => {
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
   if (url.origin !== self.location.origin || !url.href.startsWith(self.registration.scope)) return;
+  if(request.headers.has('Authorization')||!APP_SHELL.some(path=>new URL(path,self.registration.scope).pathname===url.pathname))return;
   event.respondWith(fetch(request).then(response => {
     if (response && response.ok) {
       const copy = response.clone();
