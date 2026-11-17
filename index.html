@@ -1938,7 +1938,7 @@ async function queueInspectionOffline_(basePayload, reason='offline') {
   submittedStations.add(record.stationKey);
   localStorage.setItem('dklpo_submitted_stations', JSON.stringify([...submittedStations]));
   hasSubmittedCurrent = true;
-  await registerOfflineSync_();
+  registerOfflineSync_().catch(e=>console.warn('Queue retry pending:',e));
   showSyncBanner_(reason==='offline'
     ? t('Pemeriksaan disimpan pada peranti dan akan dihantar apabila rangkaian pulih.', 'Inspection saved on this device and will sync when the network returns.')
     : t('Pelayan belum mengesahkan pemeriksaan. Salinan selamat pada peranti; cubaan semula dijadualkan.', 'The server has not confirmed the inspection. A copy is saved on this device for retry.'), 6000);
@@ -2723,7 +2723,7 @@ function updateFindingField(keyEncoded, field, value) {
 
 function showOfflineQueuedSuccessModal_(reason='offline') {
   document.getElementById('successTitle').innerHTML = '📥 <span>' + t('Menunggu Penghantaran','Awaiting Submission') + '</span>';
-  document.getElementById('successMsg').textContent = reason==='offline'
+  document.getElementById('successMsg').textContent = reason==='background' ? t('Pemeriksaan selamat disimpan pada peranti dan sedang dihantar. Anda boleh meneruskan kerja; tunggu status pengesahan pelayan.','The inspection is saved on this device and is being sent. You can continue working; check for server confirmation.') : reason==='offline'
     ? t('Pemeriksaan disimpan pada peranti. Sistem akan mencuba lagi apabila rangkaian pulih.', 'Inspection saved on this device. The system will retry when the network returns.')
     : t('Pelayan belum mengesahkan pemeriksaan walaupun peranti ada rangkaian. Salinan pada peranti akan dicuba semula.', 'The server has not confirmed the inspection. The copy on this device will be retried.');
   document.getElementById('successNext').style.display = '';
@@ -2746,7 +2746,13 @@ function showSubmitSuccessModal(result) {
 
 function closeSuccessModal(shouldLogout) {
   document.getElementById('successModal').classList.remove('active');
-  if (shouldLogout) doLogout({ confirm: false });
+  if (shouldLogout) {
+    if (window.dklpoInPageSyncActive_ || [...dklpoUxProgress_.values()].some(v => ['saved','uploading','submitting'].includes(v.phase))) {
+      nextStation();
+      return;
+    }
+    doLogout({ confirm: false });
+  }
 }
 
  
@@ -3173,120 +3179,17 @@ const totalItems = document.querySelectorAll('.status-select').length;
   }
 
  
-  if (!navigator.onLine) {
-    isSubmitting = true;
-    const offlineBtn = document.getElementById('btnSubmit');
-    offlineBtn.disabled = true;
-    try {
-      if (!(await saveDraft())) throw new Error('DRAFT_SAVE_FAILED');
-      const gpsNow = await requireGps_('submit');
-      if (!gpsNow.ok) return;
-      const offlinePayload = buildInspectionPayload_();
-      await queueInspectionOffline_(offlinePayload, 'offline');
-      showOfflineQueuedSuccessModal_('offline');
-    } catch (offlineError) {
-      console.error('Offline queue save failed:', offlineError);
-      showToast(t('Pemeriksaan gagal disimpan offline. Draf masih ada; jangan padam data browser.',
-        'Offline save failed. The draft remains; do not clear browser data.'),'error');
-    } finally {
-      isSubmitting = false;
-      offlineBtn.disabled = hasSubmittedCurrent;
-      offlineBtn.textContent = hasSubmittedCurrent ? t('✓ Menunggu Penghantaran','✓ Awaiting Submission') : t('🚀 Hantar Pemeriksaan','🚀 Submit Inspection');
-    }
-    return;
-  }
-
- 
-  if (!(await saveDraft())) {
-    showToast(t('Tidak dapat menyimpan gambar pada peranti. Jangan tutup halaman.', 'Could not save photos on this device. Keep this page open.'), 'error');
-    return;
-  }
-  isSubmitting = true;
-  hasSubmittedCurrent = true;
-  const btn = document.getElementById('btnSubmit');
-  btn.disabled = true;
-  btn.classList.add('loading');
-  btn.innerHTML = '⏳ ' + t('Menghantar...', 'Submitting...');
-
-let payload = null;
-  let uploadsCompleted = false;
-  try {
-     
-    const gpsNow = await requireGps_('submit');
-    if (!gpsNow.ok) throw new Error('GPS_REQUIRED');
-
-payload = buildInspectionPayload_();
-
-const photoUrls = [];
-    if (photos.length > 0) {
-      showToast(t('Menghantar gambar...', 'Uploading photos...'), 'success');
-      for (let i = 0; i < photos.length; i++) {
-        const photoRes = await uploadPhotoWithRetry(photos[i], i + 1);
-        if (!photoRes || !photoRes.ok || !photoRes.url) {
-          throw new Error(t(`Gagal upload gambar ${i + 1}`, `Failed to upload photo ${i + 1}`));
-        }
-
-        photoUrls.push({
-          url: photoRes.url,
-          fileId: photoRes.fileId || '',
-          resourceKey: photoRes.resourceKey || '',
-          comment: (photos[i].comment || '').trim(),
-          findingKey: photos[i].findingKey || '',
-          index: i + 1,
-          reviewAnalysis: photos[i].reviewAnalysis || null,
-          reviewAccepted: photos[i].reviewAccepted || null,
-          reviewedAt: photos[i].reviewedAt || ''
-        });
-      }
-    }
-
-    if (photos.length !== photoUrls.length) {
-      throw new Error(t('Upload gambar tidak lengkap. Sila cuba lagi.', 'Photo upload incomplete. Please try again.'));
-    }
-
-payload.photos = photoUrls;
-    uploadsCompleted = true;
-    await refreshFinalSubmissionGps_(payload);
-    const result = await submitWithRetry(payload);
-
-if (result.ok) {
-      submittedStations.add(stationKey);
-      localStorage.setItem('dklpo_submitted_stations', JSON.stringify([...submittedStations]));
-      await clearDraft();
-      try { sessionStorage.setItem('dklpo_just_submitted', 'true'); } catch (_) {}
-
- 
-      showSubmitSuccessModal(result);
-
-} else {
-      throw new Error(result.error || 'Unknown error');
-    }
-  } catch (err) {
-    console.error('Submit failed:', err);
-    hasSubmittedCurrent = false;
-    if (String(err && err.message) === 'GPS_REQUIRED') {
-      showToast(t('GPS diperlukan. Sila hidupkan GPS/Location.', 'GPS is required. Please enable GPS/Location.'), 'error');
-    } else if (isLikelyNetworkError_(err) || (err && err.retryable === true)) {
-      try {
-        const offlinePayload = payload || buildInspectionPayload_();
-        await queueInspectionOffline_(offlinePayload, 'server');
-        showOfflineQueuedSuccessModal_('server');
-      } catch (queueErr) {
-        showToast(t('Gagal menyimpan offline: ' + queueErr.message, 'Failed to save offline: ' + queueErr.message), 'error');
-      }
-    } else {
-      showToast(t('Gagal: ' + err.message, 'Failed: ' + err.message), 'error');
-    }
-  } finally {
-    isSubmitting = false;
-    btn.classList.remove('loading');
-    if (!hasSubmittedCurrent) {
-      btn.disabled = false;
-      btn.innerHTML = '🚀 ' + t('Hantar Pemeriksaan', 'Submit Inspection');
-    } else {
-      btn.innerHTML = '✓ ' + t('Sudah Dihantar', 'Submitted');
-    }
-  }
+  isSubmitting=true;
+  const btn=document.getElementById('btnSubmit');btn.disabled=true;
+  try{
+    if(!await saveDraft())throw Error(t('Draf belum selamat disimpan. Jangan tutup halaman.','The draft is not safely saved. Keep this page open.'));
+    const gps=await requireGps_('submit');if(!gps.ok)throw Error('GPS_REQUIRED');
+    const payload=buildInspectionPayload_();
+    const record=await queueInspectionOffline_(payload,navigator.onLine?'background':'offline');
+    dklpoShowProgress_(record.id,'saved',0,record.photos.length);
+    showOfflineQueuedSuccessModal_(navigator.onLine?'background':'offline');
+  }catch(e){hasSubmittedCurrent=false;showToast(e.message,'error');}
+  finally{isSubmitting=false;btn.disabled=hasSubmittedCurrent;btn.textContent=hasSubmittedCurrent?t('✓ Menunggu Penghantaran','✓ Awaiting Submission'):t('🚀 Hantar Pemeriksaan','🚀 Submit Inspection');}
 }
 
 function photoUploadKey_(submissionId, photo, index) {
@@ -3530,10 +3433,10 @@ async function appendOfflineQueueStatusToNotificationCentre_(){
 
 async function retryOfflineQueueItem_(id){
   try{
-    const row=await idbGet_('offlineQueue',id); if(!row)return;
+    const row=await idbGet_('offlineQueue',id); if(!row||row.status==='EDITING')return;
     if((row.status==='DIRECT_SENDING'&&Number(row.leaseUntil||0)>Date.now())
       ||(row.status==='SYNCING'&&Date.now()-new Date(row.lastAttemptAt||0).getTime()<120000))return;
-    if(row.status==='DEAD_LETTER')row.attempts=0;
+    if(['DEAD_LETTER','EDITING'].includes(row.status))row.attempts=0;
     row.status='QUEUED'; row.nextAttemptAt=''; row.deadLetterAt=''; row.leaseUntil=0;
     await idbPut_('offlineQueue',row);
     showSyncBanner_(t('Cubaan penghantaran dimulakan.','Submission retry started.'),4000);
@@ -3625,6 +3528,7 @@ navigator.serviceWorker?.addEventListener('message', (event) => {
     showSyncBanner_(t(`Penghantaran ${d.station||''} belum berjaya (${d.attempts||0}/5). Semak ralat dalam Pusat Notifikasi.`,`Submission for ${d.station||''} is pending (${d.attempts||0}/5). Check the Notification Centre for the error.`),5000);
     refreshNotificationCentre_(false);
   } else if(d.type==='KKPAS_SYNC_DEAD_LETTER'){
+    if(d.stationKey){submittedStations.delete(d.stationKey);try{localStorage.setItem('dklpo_submitted_stations',JSON.stringify([...submittedStations]));}catch(_){}}
     showSyncBanner_(t(`Penghantaran ${d.station || ''} memerlukan tindakan. Semak sebab dalam Pusat Notifikasi.`,`Submission for ${d.station || ''} requires action. Check the Notification Centre for the reason.`),9000);
     refreshNotificationCentre_(false);
   }
@@ -3862,6 +3766,7 @@ async function adhocReviewAiV13_(ph,btn){
 function adhocPayloadV13_(){return {
   reporterName:adhocGetV13_('adhocReporterV13').value.trim(),
   station:adhocGetV13_('adhocStationV13').value,
+  month:MONTHS[new Date().getMonth()],
   type:adhocGetV13_('adhocTypeV13').value,
   severity:adhocGetV13_('adhocSeverityV13').value,
   itemKey:adhocGetV13_('adhocItemV13').value.trim(),
@@ -3901,7 +3806,7 @@ async function adhocSendNowV14_(record, button){
       button.textContent='⏳ Gambar '+(i+1)+'/'+record.photos.length;
       const res=await postToWebApp({
         action:'uploadAdhocFindingPhoto',reporterName:record.payload.reporterName,
-        station:record.payload.station,month:MONTHS[new Date().getMonth()],
+        station:record.payload.station,month:record.payload.month||MONTHS[new Date(record.createdAt||Date.now()).getMonth()],
         index:i+1,base64:ph.data,comment:ph.comment||'',uploadKey:key
       },{timeoutMs:90000,retries:1});
       if(!res||!res.ok||!res.fileId)throw backendResponseError_(res,'Gagal muat naik gambar');
@@ -3979,33 +3884,28 @@ function adhocClearV13_(){
 </script>
 
 <script>
-/*! © Ennedey 2026. Copy legacy browser drafts/queue into the shared inspector store. */
-const DKLPOSharedStorage=(()=>{
- const originalOpen=openKkpasDb_;let pending;
- function request(store,method,value){return new Promise((resolve,reject)=>{const r=value===undefined?store[method]():store[method](value);r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});}
- function legacy(){return new Promise(resolve=>{const r=indexedDB.open('dklpo-inspector-browser-v1');r.onupgradeneeded=()=>r.transaction.abort();r.onsuccess=()=>resolve(r.result);r.onerror=()=>resolve(null);r.onblocked=()=>resolve(null);});}
- async function read(db,store){if(!db.objectStoreNames.contains(store))return [];return request(db.transaction(store,'readonly').objectStore(store),'getAll');}
- async function get(db,store,key){return request(db.transaction(store,'readonly').objectStore(store),'get',key);}
- async function put(db,store,value){return new Promise((resolve,reject)=>{const tx=db.transaction(store,'readwrite');tx.objectStore(store).put(value);tx.oncomplete=()=>resolve();tx.onabort=tx.onerror=()=>reject(tx.error||Error('LEGACY_MIGRATION_FAILED'));});}
- async function migrate(){
-  const db=await originalOpen();if(await get(db,'kv','migration:browser:2.2.6'))return db;
-  const old=await legacy();if(!old)return db;let copied=0;
-  try{
-   for(const store of ['drafts','offlineQueue','kv'])for(const value of await read(old,store)){
-    const id=store==='kv'?value.key:value.id;if(!id)continue;
-    if(!await get(db,store,id)){await put(db,store,value);copied++;}
-   }
-   await put(db,'kv',{key:'migration:browser:2.2.6',value:{at:new Date().toISOString(),copied}});
-  }finally{old.close();}
-  return db;
- }
- openKkpasDb_=function(){if(!pending)pending=migrate().catch(error=>{pending=null;throw error;});return pending;};
- return {ready:()=>openKkpasDb_()};
-})();
-
-</script>
-<script>
 /*! © Ennedey 2026. Fire evidence inside the existing main form. No AI or scanner. */
+
+/*! © Ennedey 2026. Reuse only complete, fresh and validated GPS samples. */
+function dklpoFreshSubmissionGps_(s,now=Date.now()){
+ if(!s)return false;
+ const fields=['lat','lng','accuracy','gpsSampleCount','gpsSpreadM'];
+ if(fields.some(k=>s[k]===null||s[k]===undefined||String(s[k]).trim()===''||!Number.isFinite(Number(s[k]))))return false;
+ const age=now-Date.parse(String(s.gpsCapturedAt||''));
+ return Number.isFinite(age)&&age>=0&&age<60000&&Math.abs(Number(s.lat))<=90&&Math.abs(Number(s.lng))<=180&&Number(s.accuracy)>=0&&Number(s.accuracy)<=GPS_REJECT_ACCURACY_M&&Number.isInteger(Number(s.gpsSampleCount))&&Number(s.gpsSampleCount)>=GPS_MIN_SAMPLES&&Number(s.gpsSpreadM)>=0&&Number(s.gpsSpreadM)<=GPS_MAX_SAMPLE_SPREAD_M;
+}
+const dklpoRequireGpsOriginal_=requireGps_;
+requireGps_=async function(context){
+ const scope=[currentTeam?.code||'',currentStation||''].join('|');
+ if(['submit','final-submit'].includes(context)&&session?._dklpoGpsScope===scope&&dklpoFreshSubmissionGps_(session))return {ok:true,lat:Number(session.lat),lng:Number(session.lng),accuracy:Number(session.accuracy),sampleCount:Number(session.gpsSampleCount),spreadM:Number(session.gpsSpreadM),capturedAt:session.gpsCapturedAt};
+ const result=await dklpoRequireGpsOriginal_.apply(this,arguments);
+ if(result?.ok&&session&&scope===[currentTeam?.code||'',currentStation||''].join('|'))session._dklpoGpsScope=scope;
+ return result;
+};
+// A distance preview is nonessential while the actual report is being sent.
+const dklpoScheduleGeoOriginal_=dklpoScheduleGeo_;
+dklpoScheduleGeo_=function(){if(isSubmitting)return;return dklpoScheduleGeoOriginal_.apply(this,arguments);};
+
 const IMSMainFire=(()=>{
  const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const tr=(ms,en)=>(typeof inspectionLang!=='undefined'?inspectionLang:typeof currentLang!=='undefined'?currentLang:'ms')==='en'?en:ms;
@@ -4013,55 +3913,442 @@ const IMSMainFire=(()=>{
  const context=()=>({teamCode:currentTeam?.code||'',inspectorName:currentTeam?.name||'',station:currentStation||'',month:session?.month||'',year:session?.year||new Date().getFullYear(),inspectorAuth:session?.inspectorAuth||'',submissionId:currentSubmissionId||''});
  const scope=c=>[c.teamCode,c.year,c.month,c.station,c.submissionId].join('|');
  const key=c=>'IMS_MAIN_FIRE_V1:'+scope(c);
- const origPut=idbPut_,origGet=idbGet_;let state=null,loading=null,sequence=0,writes=Promise.resolve(),busy=0;
+ const origPut=idbPut_,origGet=idbGet_;let state=null,loading=null,sequence=0,writes=Promise.resolve(),busy=0,submitPending=false;
+ let persistTimer=null;
+ const types=['hose_reel','break_glass','hydrant','fixed_monitor'];
+ const applicable=a=>a&&types.includes(a.type)&&![0,'0',false].includes(a.inspection_enabled)&&['active','expired'].includes(a.lifecycle);
+ function validRegistry(r){return r?.ok===true&&r.checklistVersion===2&&Array.isArray(r.assets)&&r.assets.every(a=>a&&typeof a.id==='string'&&a.id.trim()&&typeof a.lifecycle==='string'&&[...types,'extinguisher'].includes(a.type)&&(a.inspection_enabled===undefined||[0,'0',false,1,'1',true].includes(a.inspection_enabled)))&&new Set(r.assets.filter(applicable).map(a=>a.id)).size===r.assets.filter(applicable).length&&r.assets.filter(applicable).every(a=>Array.isArray(r.checks?.[a.type])&&r.checks[a.type].length&&r.checks[a.type].every(k=>typeof k==='string'&&k)&&new Set(r.checks[a.type]).size===r.checks[a.type].length);}
  function root(){let el=document.getElementById('imsMainFire');if(!el){el=document.createElement('section');el.id='imsMainFire';el.className='card-mobile';document.getElementById('checklistContainer')?.after(el);}return el;}
  function status(message,error=false){const el=document.querySelector('#imfStatus');if(el){el.textContent=message;el.style.color=error?'#ef4444':'';}}
- const label=(k,r)=>tr(r.labels?.[k]||k,r.labelsEn?.[k]||r.labels?.[k]||k);
-
+ const label=(k,r)=>({pressure:tr('Tekanan','Pressure'),nozzle:tr('Nozzle / hos','Nozzle / hose'),cylinder:tr('Keadaan silinder','Cylinder condition'),safety_pin:tr('Pin keselamatan','Safety pin'),sign:tr('Tanda / label','Sign / label'),status:tr('Keadaan / fungsi','Condition / function')})[k]||r.labels?.[k]||k;
  function collect(){
   if(!state)return null;const el=root();if(!el.querySelector('[data-imf-attest]'))return state;
   state.fire.attested=el.querySelector('[data-imf-attest]').checked;
-  state.fire.lateReason=el.querySelector('[data-imf-late]').value;
+  state.fire.lateReason=el.querySelector('[data-imf-late]')?.value||'';
   for(const item of state.fire.items){for(const input of el.querySelectorAll('[data-imf-check]'))if(input.dataset.imfAsset===item.id)item.checks[input.dataset.imfCheck]=input.value;const note=[...el.querySelectorAll('[data-imf-note]')].find(n=>n.dataset.imfNote===item.id);if(note)item.remarks=note.value;}
-  for(const [i,photo] of state.fire.photos.entries()){photo.location=el.querySelector(`[data-imf-location="${i}"]`)?.value||photo.location||'';photo.assetIds=[...el.querySelectorAll(`[data-imf-photo="${i}"]:checked`)].map(n=>n.value);}
+  for(const [i,photo] of state.fire.photos.entries()){const input=el.querySelector(`[data-imf-location="${i}"]`);if(input)photo.location=input.value;photo.assetIds=[...el.querySelectorAll(`[data-imf-photo="${i}"]:checked`)].map(n=>n.value);}
   return state;
  }
  async function persist(){if(!state)return;const value=clone(collect()),record={key:key(value.context),value};writes=writes.catch(()=>{}).then(()=>origPut('kv',record));await writes;}
  function render(){
   const el=root();if(!state){el.innerHTML='<h3>'+tr('Pemeriksaan sistem melawan kebakaran','Fire safety inspection')+'</h3><p>'+tr('Memuatkan daftar peralatan…','Loading equipment register…')+'</p>';return;}
   const {registry:r,fire:f}=state;
-  if(!f.items.length){el.innerHTML='<h3>🔥 '+tr('Pemeriksaan sistem melawan kebakaran','Fire safety inspection')+'</h3><p>'+tr('Tiada peralatan kebakaran dalam skop pemeriksaan stesen ini. Pemadam api ditangguhkan sementara.','No fire equipment is in scope at this station. Fire extinguishers are temporarily on hold.')+'</p><button type="button" class="btn" data-imf-refresh>'+tr('Muat semula daftar peralatan','Refresh equipment register')+'</button>';return;}
-  el.innerHTML=`<h3>🔥 ${tr('Pemeriksaan sistem melawan kebakaran','Fire safety inspection')}</h3><p>${tr('Wajib: semak semua peralatan dan padankan gambar bukti. Gambar yang sama boleh meliputi beberapa peralatan jika semuanya jelas kelihatan.','Required: inspect all equipment and link photo evidence. One photo can cover several units if all are clearly visible.')}</p>${f.items.map(a=>{const asset=r.assets.find(x=>x.id===a.id);return `<fieldset style="border:1px solid #94a3b8;border-radius:10px;padding:12px;margin:14px 0"><legend>${esc(asset.code)} · ${esc(r.types[asset.type]||asset.type)}</legend><p>${esc(asset.location_name)}</p>${r.checks[a.type].map(k=>`<label style="display:block;margin:8px 0">${esc(label(k,r))}<select class="form-control" data-imf-asset="${esc(a.id)}" data-imf-check="${esc(k)}"><option value="">${tr('— Pilih keputusan —','— Select result —')}</option>${[['OK',tr('Baik','Good')],['NOT_OK',tr('Tidak baik','Not good')],['NOT_INSPECTED',tr('Tidak dapat diperiksa','Unable to inspect')]].map(([v,n])=>`<option value="${v}" ${a.checks[k]===v?'selected':''}>${n}</option>`).join('')}</select></label>`).join('')}<label>${tr('Catatan / sebab (wajib jika bukan Baik)','Remarks / reason (required unless Good)')}<textarea class="form-control" data-imf-note="${esc(a.id)}" maxlength="2000">${esc(a.remarks||'')}</textarea></label></fieldset>`;}).join('')}${!f.items.length?'<p role="alert">'+tr('Daftar peralatan stesen masih kosong. Hubungi Admin sebelum menghantar pemeriksaan.','Equipment register is empty. Contact Admin before submitting the inspection.')+'</p>':''}<label style="display:block;margin-top:14px">📷 ${tr('Gambar bukti wajib — maksimum 12','Mandatory photo evidence — maximum 12')}<input data-imf-files type="file" accept="image/jpeg,image/png,image/webp" capture="environment" multiple></label><div>${f.photos.map((p,i)=>`<fieldset style="padding:12px;margin:12px 0;border:1px solid #94a3b8"><img src="${p.data}" alt="${tr('Bukti','Evidence')} ${i+1}" style="max-width:100%;max-height:220px"><label>${tr('Lokasi gambar','Photo location')}<input class="form-control" data-imf-location="${i}" value="${esc(p.location)}" maxlength="160"></label><p>${tr('Peralatan yang kelihatan dalam gambar ini:','Equipment visible in this photo:')}</p>${f.items.map(a=>`<label style="display:block"><input type="checkbox" data-imf-photo="${i}" value="${esc(a.id)}" ${p.assetIds.includes(a.id)?'checked':''}> ${esc(r.assets.find(x=>x.id===a.id)?.code)}</label>`).join('')}<button class="btn" type="button" data-imf-remove="${i}">${tr('Buang gambar','Remove photo')}</button></fieldset>`).join('')}</div><label style="display:block">${tr('Sebab lewat, jika berkenaan','Reason for late submission, if applicable')}<input class="form-control" data-imf-late maxlength="1000" value="${esc(f.lateReason||'')}"></label><label style="display:block;margin:14px 0"><input type="checkbox" data-imf-attest ${f.attested?'checked':''}> ${tr('Saya mengesahkan keputusan dan gambar ini mewakili pemeriksaan peralatan di stesen ini.','I confirm these results and photos represent the equipment inspection at this station.')}</label><p id="imfStatus" role="status" aria-live="polite"></p><button type="button" class="btn" data-imf-refresh>${tr('Muat semula daftar peralatan','Refresh equipment register')}</button>`;
+  if(!f.items.length){el.innerHTML=`<h3>🔥 ${tr('Pemeriksaan sistem melawan kebakaran','Fire safety inspection')}</h3><p>${tr('Tiada peralatan melawan kebakaran dalam skop pemeriksaan bagi stesen ini.','There is no in-scope fire equipment at this station.')}</p>${state.registryChanged?`<p role="alert">${tr('Daftar peralatan telah berubah. Keputusan lama dikekalkan dalam draf untuk rujukan.','The equipment register changed. Previous results are retained in the draft for reference.')}</p><button type="button" class="btn" data-imf-ack>${tr('Sahkan semakan daftar baharu','Confirm review of the new register')}</button>`:''}${f.photos.length?`<p role="alert">${tr('Draf mempunyai gambar daripada daftar lama. Semak dan buang gambar yang tidak lagi berkaitan sebelum menghantar.','The draft contains photos from an older register. Review and remove unrelated photos before submitting.')}</p>${f.photos.map((p,i)=>`<figure><img src="${p.data}" alt="${esc(p.location||'Evidence')}" style="max-width:100%;max-height:180px"><figcaption>${esc(p.location)}</figcaption><button type="button" class="btn" data-imf-remove="${i}">${tr('Buang gambar','Remove photo')}</button></figure>`).join('')}`:''}<p id="imfStatus" role="status"></p><button type="button" class="btn" data-imf-refresh>${tr('Muat semula daftar peralatan','Refresh equipment register')}</button>`;return;}
+  el.innerHTML=`<h3>🔥 ${tr('Pemeriksaan sistem melawan kebakaran','Fire safety inspection')}</h3><p>${tr('Wajib: semak semua peralatan dan padankan gambar bukti. Gambar yang sama boleh meliputi beberapa peralatan jika semuanya jelas kelihatan.','Required: inspect all equipment and link photo evidence. One photo can cover several units if all are clearly visible.')}</p>${f.items.map(a=>{const asset=r.assets.find(x=>x.id===a.id);return `<fieldset style="border:1px solid #94a3b8;border-radius:10px;padding:12px;margin:14px 0"><legend>${esc(asset.code)} · ${esc(r.types?.[asset.type]||asset.type)}</legend><p>${esc(asset.location_name)} · ${tr('Siri','Serial')}: ${esc(asset.serial||'—')} · ${tr('Luput','Expiry')}: ${esc(asset.expiry_date||'—')}</p>${r.checks[a.type].map(k=>`<label style="display:block;margin:8px 0">${esc(label(k,r))}<select class="form-control" data-imf-asset="${esc(a.id)}" data-imf-check="${esc(k)}"><option value="">${tr('— Pilih keputusan —','— Select result —')}</option>${[['OK',tr('Baik','Good')],['NOT_OK',tr('Tidak baik','Not good')],['NOT_INSPECTED',tr('Tidak dapat diperiksa','Unable to inspect')]].map(([v,n])=>`<option value="${v}" ${a.checks[k]===v?'selected':''}>${n}</option>`).join('')}</select></label>`).join('')}<label>${tr('Catatan / sebab (wajib jika bukan Baik)','Remarks / reason (required unless Good)')}<textarea class="form-control" data-imf-note="${esc(a.id)}" maxlength="2000">${esc(a.remarks||'')}</textarea></label></fieldset>`;}).join('')}${!f.items.length?'<p role="alert">'+tr('Daftar peralatan stesen masih kosong. Hubungi Admin sebelum menghantar pemeriksaan.','Equipment register is empty. Contact Admin before submitting the inspection.')+'</p>':''}<label style="display:block;margin-top:14px">📷 ${tr('Gambar bukti wajib — maksimum 12','Mandatory photo evidence — maximum 12')}<input data-imf-files type="file" accept="image/jpeg,image/png,image/webp" capture="environment" multiple></label><div>${f.photos.map((p,i)=>`<fieldset style="padding:12px;margin:12px 0;border:1px solid #94a3b8"><img src="${p.data}" alt="${tr('Bukti','Evidence')} ${i+1}" style="max-width:100%;max-height:220px"><label>${tr('Lokasi gambar','Photo location')}<input class="form-control" data-imf-location="${i}" value="${esc(p.location)}" maxlength="160"></label><p>${tr('Peralatan yang kelihatan dalam gambar ini:','Equipment visible in this photo:')}</p>${f.items.map(a=>`<label style="display:block"><input type="checkbox" data-imf-photo="${i}" value="${esc(a.id)}" ${p.assetIds.includes(a.id)?'checked':''}> ${esc(r.assets.find(x=>x.id===a.id)?.code)}</label>`).join('')}<button class="btn" type="button" data-imf-remove="${i}">${tr('Buang gambar','Remove photo')}</button></fieldset>`).join('')}</div><label style="display:block">${tr('Sebab lewat, jika berkenaan','Reason for late submission, if applicable')}<input class="form-control" data-imf-late maxlength="1000" value="${esc(f.lateReason||'')}"></label><label style="display:block;margin:14px 0"><input type="checkbox" data-imf-attest ${f.attested?'checked':''}> ${tr('Saya mengesahkan keputusan dan gambar ini mewakili pemeriksaan peralatan di stesen ini.','I confirm these results and photos represent the equipment inspection at this station.')}</label><p id="imfStatus" role="status" aria-live="polite"></p><button type="button" class="btn" data-imf-refresh>${tr('Muat semula daftar peralatan','Refresh equipment register')}</button>`;
  }
  async function load(force=false){
   let c;try{c=context();}catch{return;}if(!c.station||!c.teamCode||!c.submissionId)return;
-  if(!force&&state&&scope(state.context)===scope(c))return;
+  if(!force&&state&&scope(state.context)===scope(c)&&validRegistry(state.registry))return;
   if(!force&&loading?.scope===scope(c))return loading.promise;
   if(state)await persist();const ticket=++sequence;state=null;render();
-  const promise=(async()=>{let cached=await origGet('kv',key(c)).catch(()=>null),r=cached?.value?.registry;
-   if(force||!r||r.checklistVersion!==2){try{r=await postToWebApp({action:'getInspectorWorkspace',fireRegistryOnly:'1',...c},{timeoutMs:60000,retries:1});if(!r?.ok)throw Error(r?.error||'FIRE_REGISTRY_FAILED');}catch(e){if(!r||r.checklistVersion!==2)throw e;}}
-   if(ticket!==sequence)return;
-   if(r.checklistVersion!==2)throw Error(tr('Kemas kini IMS dahulu, kemudian muat semula halaman ini.','Update IMS first, then reload this page.'));
-   const old=cached?.value?.fire,assets=r.assets.filter(a=>a.type!=='extinguisher'&&a.inspection_enabled!==0&&['active','expired'].includes(a.lifecycle));
-   state={context:c,registry:r,fire:{version:1,checklistVersion:2,notApplicable:!assets.length,period:c.year+'-'+String(MONTHS.indexOf(c.month)+1).padStart(2,'0'),attested:!assets.length||old?.attested||false,lateReason:old?.lateReason||'',photos:(old?.photos||[]).map(p=>({...p,assetIds:p.assetIds.filter(id=>assets.some(a=>a.id===id))})).filter(p=>p.assetIds.length),items:assets.map(a=>({id:a.id,type:a.type,checks:Object.fromEntries(r.checks[a.type].map(k=>[k,old?.items?.find(x=>x.id===a.id)?.checks?.[k]||''])),remarks:old?.items?.find(x=>x.id===a.id)?.remarks||''}))}};
+  const promise=(async()=>{
+   const cached=await origGet('kv',key(c)).catch(()=>null);let r=cached?.value?.registry;
+   if(force||!validRegistry(r)||navigator.onLine){
+    try{
+     const fresh=await postToWebApp({action:'getInspectorWorkspace',fireRegistryOnly:'1',forceFireRegistry:force?'1':'0',...c},{timeoutMs:60000,retries:1});
+     if(!validRegistry(fresh))throw Error(fresh?.error||'FIRE_UPDATE_IMS_FIRST: Daftar peralatan versi 2 diperlukan.');
+     r=fresh;
+    }catch(e){if(force||navigator.onLine||!validRegistry(r))throw e;}
+   }
+   if(!validRegistry(r))throw Error('FIRE_REGISTRY_INVALID');
+   if(ticket!==sequence||scope(c)!==scope(context()))return;
+   const old=cached?.value?.fire,assets=r.assets.filter(applicable);
+   const items=assets.map(a=>{const previous=old?.items?.find(x=>x.id===a.id&&x.type===a.type);return {id:a.id,type:a.type,checks:Object.fromEntries(r.checks[a.type].map(k=>[k,previous?.checks?.[k]||''])),remarks:previous?.remarks||''};});
+   const changed=!!old&&JSON.stringify((old.items||[]).map(a=>[a.id,a.type,Object.keys(a.checks||{}).sort()]).sort())!==JSON.stringify(items.map(a=>[a.id,a.type,Object.keys(a.checks).sort()]).sort());
+   state={context:c,registry:r,previousFire:changed?clone(old):cached?.value?.previousFire,registryChanged:changed||cached?.value?.registryChanged===true,fire:{version:1,checklistVersion:2,period:c.year+'-'+String(MONTHS.indexOf(c.month)+1).padStart(2,'0'),attested:!assets.length||(!changed&&old?.attested===true),notApplicable:!assets.length,lateReason:old?.lateReason||'',photos:Array.isArray(old?.photos)?old.photos:[],items}};
    render();await persist();
-  })().catch(e=>{if(ticket===sequence){root().innerHTML='<h3>'+tr('Pemeriksaan sistem melawan kebakaran','Fire safety inspection')+'</h3><p role="alert">'+esc(e.message)+'</p><button type="button" class="btn" data-imf-refresh>'+tr('Cuba semula','Retry')+'</button>';}}).finally(()=>{if(loading?.promise===promise)loading=null;});
+  })().catch(e=>{if(ticket===sequence){state=null;root().innerHTML='<h3>'+tr('Pemeriksaan sistem melawan kebakaran','Fire safety inspection')+'</h3><p role="alert">'+esc(e.message)+'</p><button type="button" class="btn" data-imf-refresh>'+tr('Cuba semula','Retry')+'</button>';}}).finally(()=>{if(loading?.promise===promise)loading=null;});
   loading={scope:scope(c),promise};return promise;
  }
  function snapshot(){if(!state||scope(state.context)!==scope(context()))throw Error(tr('Daftar peralatan belum dimuatkan. Cuba semula dengan internet.','Equipment register is not loaded. Retry with internet.'));return clone(collect().fire);}
- async function validate(){await load();if(busy)throw Error(tr('Tunggu gambar selesai diproses.','Wait for photos to finish processing.'));const f=snapshot();if(!f.items.length){f.notApplicable=true;f.attested=true;f.photos=[];return f;}for(const a of f.items){for(const k of state.registry.checks[a.type])if(!['OK','NOT_OK','NOT_INSPECTED'].includes(a.checks[k]))throw Error(tr('Lengkapkan semua keputusan pemeriksaan kebakaran.','Complete every fire inspection result.'));if(Object.values(a.checks).some(v=>v!=='OK')&&!a.remarks.trim())throw Error(tr('Catatan wajib bagi peralatan tidak baik atau tidak dapat diperiksa.','Remarks are required for defective or uninspected equipment.'));}if(!f.photos.length||f.photos.length>12)throw Error(tr('Ambil gambar bukti peralatan kebakaran sebelum menghantar.','Take fire equipment evidence photos before submitting.'));if(f.photos.some(p=>!p.location.trim()||!p.assetIds.length)||f.items.some(a=>!f.photos.some(p=>p.assetIds.includes(a.id))))throw Error(tr('Isi lokasi gambar dan padankan bukti kepada setiap peralatan.','Enter photo locations and link evidence to every equipment unit.'));if(!f.attested)throw Error(tr('Tandakan pengesahan pemeriksaan kebakaran.','Confirm the fire inspection attestation.'));await persist();return f;}
- document.addEventListener('input',e=>{if(e.target.closest('#imsMainFire')&&!e.target.matches('[data-imf-files]'))persist().catch(err=>status(err.message,true));});
- document.addEventListener('change',async e=>{if(!e.target.matches('[data-imf-files]'))return;busy++;const current=state;try{collect();if(current.fire.photos.length+e.target.files.length>12)throw Error(tr('Maksimum 12 gambar kebakaran.','Maximum 12 fire evidence photos.'));for(const file of e.target.files){if(!/^image\/(jpeg|png|webp)$/.test(file.type)||file.size>20000000)throw Error(tr('Pilih gambar JPEG, PNG atau WebP di bawah 20MB.','Choose a JPEG, PNG or WebP image below 20MB.'));const source=await readFileAsDataUrl(file),image=await dklpoCompressImage_(source,180000,1400);if(current!==state)return;current.fire.photos.push({data:image.dataUrl,location:'',assetIds:[]});}render();await persist();}catch(err){status(err.message,true);}finally{busy--;e.target.value='';}});
- document.addEventListener('click',async e=>{if(e.target.closest('[data-imf-refresh]')){if(state)await persist();await load(true);}if(e.target.matches('[data-imf-remove]')){collect();state.fire.photos.splice(Number(e.target.dataset.imfRemove),1);render();await persist();}});
+ async function validate(){await load();if(busy)throw Error(tr('Tunggu gambar selesai diproses.','Wait for photos to finish processing.'));const f=snapshot();if(!f.items.length){if(state.registryChanged)throw Error(tr('Sahkan semakan daftar baharu sebelum menghantar.','Confirm review of the updated register before submitting.'));if(f.photos.length)throw Error(tr('Semak gambar daripada daftar lama sebelum menghantar.','Review photos from the previous register before submitting.'));await persist();return f;}for(const a of f.items){for(const k of state.registry.checks[a.type])if(!['OK','NOT_OK','NOT_INSPECTED'].includes(a.checks[k]))throw Error(tr('Lengkapkan semua keputusan pemeriksaan kebakaran.','Complete every fire inspection result.'));if(Object.values(a.checks).some(v=>v!=='OK')&&!a.remarks.trim())throw Error(tr('Catatan wajib bagi peralatan tidak baik atau tidak dapat diperiksa.','Remarks are required for defective or uninspected equipment.'));}if(!f.photos.length||f.photos.length>12)throw Error(tr('Ambil gambar bukti peralatan kebakaran sebelum menghantar.','Take fire equipment evidence photos before submitting.'));if(f.photos.some(p=>!String(p.location||'').trim()||!Array.isArray(p.assetIds)||!p.assetIds.length||p.assetIds.some(id=>!f.items.some(a=>a.id===id)))||f.items.some(a=>!f.photos.some(p=>p.assetIds.includes(a.id))))throw Error(tr('Isi lokasi gambar dan padankan bukti kepada setiap peralatan.','Enter photo locations and link evidence to every equipment unit.'));if(!f.attested)throw Error(tr('Tandakan pengesahan pemeriksaan kebakaran.','Confirm the fire inspection attestation.'));state.registryChanged=false;await persist();return f;}
+ document.addEventListener('input',e=>{if(e.target.closest('#imsMainFire')&&!e.target.matches('[data-imf-files]')){clearTimeout(persistTimer);persistTimer=setTimeout(()=>persist().catch(err=>status(err.message,true)),300);}});
+ document.addEventListener('change',async e=>{if(!e.target.matches('[data-imf-files]'))return;if(!state)return;busy++;const current=state;try{collect();if(current.fire.photos.length+e.target.files.length>12)throw Error(tr('Maksimum 12 gambar kebakaran.','Maximum 12 fire evidence photos.'));for(const file of e.target.files){if(!/^image\/(jpeg|png|webp)$/.test(file.type)||file.size>20000000)throw Error(tr('Pilih gambar JPEG, PNG atau WebP di bawah 20MB.','Choose a JPEG, PNG or WebP image below 20MB.'));const source=await readFileAsDataUrl(file),image=await dklpoCompressImage_(source,180000,1400);if(current!==state||scope(current.context)!==scope(context()))return;current.fire.photos.push({data:image.dataUrl,location:'',assetIds:[]});}collect();render();await persist();}catch(err){if(current===state){collect();render();await persist().catch(()=>{});}status(err.message,true);}finally{busy--;e.target.value='';}});
+ document.addEventListener('click',async e=>{if(e.target.matches('[data-imf-ack]')){collect();state.registryChanged=false;render();await persist();return;}if(e.target.closest('[data-imf-refresh]')){if(busy)return;if(state)await persist();await load(true);}if(e.target.matches('[data-imf-remove]')){collect();state.fire.photos.splice(Number(e.target.dataset.imfRemove),1);render();await persist();}});
  const originalLoad=loadStation;loadStation=async function(...args){const result=await originalLoad.apply(this,args);if(result!==false)await load();return result;};
  const originalRestore=restoreDraft;restoreDraft=async function(...args){const result=await originalRestore.apply(this,args);await load();return result;};
- const originalSubmit=submitInspection;submitInspection=async function(...args){if(isSubmitting||hasSubmittedCurrent)return originalSubmit.apply(this,args);try{await validate();}catch(e){showToast(e.message,'error');root().scrollIntoView?.({behavior:'smooth'});return;}return originalSubmit.apply(this,args);};
+ const originalSubmit=submitInspection;submitInspection=async function(...args){if(submitPending||isSubmitting||hasSubmittedCurrent)return;submitPending=true;try{await validate();}catch(e){showToast(e.message,'error');root().scrollIntoView?.({behavior:'smooth'});submitPending=false;return;}try{return await originalSubmit.apply(this,args);}finally{submitPending=false;}};
  if(typeof buildInspectionPayload_==='function'){const old=buildInspectionPayload_;buildInspectionPayload_=function(...args){return {...old.apply(this,args),fire:JSON.stringify(snapshot())};};}
  if(typeof browserQueueSave_==='function'){const old=browserQueueSave_;browserQueueSave_=async function(record){if(record.type==='INSPECTION'&&!record.payload.fire){if(record.id!==context().submissionId)throw Error('FIRE_DRAFT_SCOPE_MISMATCH');record.payload.fire=JSON.stringify(snapshot());}return old.call(this,record);};}
  const originalIdbPut=idbPut_;idbPut_=async function(store,value,...rest){if(store==='drafts'&&state&&scope(state.context)===scope(context())){await persist();value={...value,fireEvidence:clone(collect())};}if(store==='offlineQueue'&&value?.payload?.action==='submitInspection'&&!value.payload.fire){if(value.payload.clientSubmissionId!==context().submissionId)throw Error('FIRE_DRAFT_SCOPE_MISMATCH');value={...value,payload:{...value.payload,fire:JSON.stringify(snapshot())}};}return originalIdbPut.call(this,store,value,...rest);};
  const originalLanguage=setLanguage;setLanguage=function(...args){if(state)collect();const result=originalLanguage.apply(this,args);if(state)render();return result;};
- return {load,validate,snapshot,persist};
+
+ // Upgrade only a legacy payload whose complete equipment/checklist still
+ // matches the authenticated live registry. Never remove old photos/results.
+ function upgradeLegacyFire(f,r,c){
+  if(!validRegistry(r))throw Error('FIRE_REGISTRY_INVALID');
+  const assets=r.assets.filter(applicable),period=c.year+'-'+String(MONTHS.indexOf(c.month)+1).padStart(2,'0');
+  if(!f&&!assets.length)return {version:1,checklistVersion:2,period,attested:true,notApplicable:true,items:[],photos:[]};
+  const mismatch=()=>Error(tr('Daftar bomba bagi laporan tersimpan telah berubah. Bukti dikekalkan; semak laporan sebelum menghantar semula.','The register for this saved report changed. Evidence is retained; review the report before resubmitting.'));
+  if(!f||f.version!==1||(f.checklistVersion!==undefined&&f.checklistVersion!==2)||f.period!==period||!Array.isArray(f.items)||!Array.isArray(f.photos)||f.items.length!==assets.length)throw mismatch();
+  const seen=new Set();
+  for(const item of f.items){if(!item)throw mismatch();const a=assets.find(a=>a.id===item.id&&a.type===item.type);if(!a||seen.has(a.id)||!item.checks||Array.isArray(item.checks)||Object.keys(item.checks).length!==r.checks[a.type].length||r.checks[a.type].some(k=>!Object.prototype.hasOwnProperty.call(item.checks,k)||!['OK','NOT_OK','NOT_INSPECTED'].includes(item.checks[k])))throw mismatch();seen.add(a.id);}
+  if(f.photos.some(ph=>!ph||!Array.isArray(ph.assetIds)||ph.assetIds.some(id=>!seen.has(id))))throw mismatch();
+  if(!assets.length&&f.photos.length)throw mismatch();
+  return {...clone(f),checklistVersion:2,notApplicable:!assets.length};
+ }
+ function queueBusy(row){return row&&(row.status==='SENDING'||row.status==='SYNCING'||row.status==='DIRECT_SENDING')&&(Number(row.leaseUntil)>Date.now()||Date.now()-Date.parse(row.lastAttemptAt||'')<120000);}
+ async function repairQueuedFire(id){
+  const row=await origGet('offlineQueue',id);if(!row||row.payload?.action!=='submitInspection'||queueBusy(row))return;
+  let f;try{f=typeof row.payload.fire==='string'?JSON.parse(row.payload.fire):row.payload.fire;}catch{throw Error('INVALID_FIRE_REPORT');}
+  if(f?.checklistVersion===2)return;
+  const p=row.payload,c={teamCode:p.teamCode,month:p.month,year:p.year,station:p.station,inspectorAuth:p.inspectorAuth||''};
+  if(session?.team?.code===c.teamCode&&session.inspectorAuth)c.inspectorAuth=session.inspectorAuth;
+  const r=await postToWebApp({action:'getInspectorWorkspace',fireRegistryOnly:'1',...c},{timeoutMs:60000,retries:1}),next=upgradeLegacyFire(f,r,c),original=JSON.stringify(row.payload.fire);
+  const db=await openKkpasDb_();
+  await new Promise((resolve,reject)=>{const tx=db.transaction('offlineQueue','readwrite'),store=tx.objectStore('offlineQueue'),request=store.get(id);
+   request.onsuccess=()=>{const current=request.result;if(current&&!queueBusy(current)&&JSON.stringify(current.payload?.fire)===original)store.put({...current,payload:{...current.payload,fire:JSON.stringify(next)}});};
+   tx.oncomplete=resolve;tx.onerror=tx.onabort=()=>reject(tx.error||Error('QUEUE_UPDATE_FAILED'));
+  });
+ }
+ if(typeof retryOfflineQueueItem_==='function'){const old=retryOfflineQueueItem_;retryOfflineQueueItem_=async function(id){try{await repairQueuedFire(id);return await old.apply(this,arguments);}catch(e){showToast(e.message,'error');}};}
+ if(typeof browserQueueRetry_==='function'){const old=browserQueueRetry_;browserQueueRetry_=async function(id){await repairQueuedFire(id);return old.apply(this,arguments);};}
+
+ async function importQueuedFire(value){
+  const c=context();await writes.catch(()=>{});const cached=await origGet('kv',key(c)).catch(()=>null),registry=cached?.value?.registry||state?.registry;clearTimeout(persistTimer);sequence++;state=null;
+  await origPut('kv',{key:key(c),value:{context:c,fire:clone(value),registry:registry,registryChanged:true}});
+  await load(navigator.onLine);return {ready:!!state};
+ }
+ return {load,validate,snapshot,persist,upgradeLegacyFire,importQueuedFire};
 })();
+
+</script>
+<script>
+/*! © Ennedey 2026. Bounded uploads: preserve order and await in-flight work. */
+async function dklpoUploadPool_(items,limit,job){
+ const result=new Array(items.length);let cursor=0,failed=null;
+ async function worker(){while(!failed){const i=cursor++;if(i>=items.length)return;try{result[i]=await job(items[i],i);}catch(e){if(!failed)failed=e;}}}
+ await Promise.all(Array.from({length:Math.min(Math.max(1,Number(limit)||1),2,items.length)},worker));
+ if(failed)throw failed;return result;
+}
+function dklpoUploadTransient_(e){return e?.retryable===true||e?.networkError===true||/RATE_LIMIT|SERVER_BUSY|BACKEND_UNAVAILABLE|GATEWAY_FAILURE|429|timeout|Failed to fetch|NetworkError/i.test(String(e?.message||e?.error||''));}
+const dklpoUxProgress_=new Map();
+let dklpoUxProgressDismissed_=false;
+function dklpoShowProgress_(id,phase,done=0,total=0){
+ if(typeof document==='undefined')return;
+ dklpoUxProgress_.set(id,{phase,done,total});
+ let panel=document.getElementById('dklpoUploadProgress');
+ if(!panel){panel=document.createElement('aside');panel.id='dklpoUploadProgress';panel.setAttribute('role','status');panel.setAttribute('aria-live','polite');panel.style.cssText='position:fixed;left:12px;right:12px;bottom:16px;z-index:980;max-width:560px;max-height:160px;overflow:auto;margin:auto;padding:12px 16px;border:1px solid #64748b;border-radius:12px;background:#0f172a;color:#f8fafc;box-shadow:0 8px 24px #0006;font:14px system-ui';document.body.append(panel);}
+ panel.replaceChildren();
+ const close=document.createElement('button');close.type='button';close.textContent='×';close.setAttribute('aria-label','Sembunyikan status / Hide status');close.style.cssText='float:right;margin-left:12px;background:transparent;color:inherit;border:0;font-size:22px;cursor:pointer';close.onclick=()=>{dklpoUxProgressDismissed_=true;panel.hidden=true;};panel.append(close);
+ for(const [key,v]of dklpoUxProgress_){const line=document.createElement('div');const lang=typeof inspectionLang!=='undefined'?inspectionLang:typeof currentLang!=='undefined'?currentLang:'ms';const en=lang==='en';const labels={saved:en?'Saved on device — awaiting submission':'Disimpan pada peranti — menunggu penghantaran',uploading:en?'Uploading photos':'Memuat naik gambar',submitting:en?'Awaiting server confirmation':'Menunggu pengesahan pelayan',success:en?'Submission confirmed by server':'Penghantaran disahkan pelayan',pending:en?'Pending — reopen this portal online to retry':'Masih menunggu — buka portal online untuk cuba semula',review:en?'Review required — evidence retained':'Perlu semakan — bukti dikekalkan'};line.textContent=(labels[v.phase]||v.phase)+(v.total?' '+v.done+'/'+v.total:'');panel.append(line);}
+ if(phase==='saved'||phase==='review')dklpoUxProgressDismissed_=false;
+ panel.hidden=dklpoUxProgressDismissed_;
+ if(phase==='success')setTimeout(()=>{const v=dklpoUxProgress_.get(id);if(v?.phase==='success'){dklpoUxProgress_.delete(id);if(!dklpoUxProgress_.size)panel.hidden=true;}},6500);
+}
+
+/*! © Ennedey 2026. Collect a fresh validated sample window while inspecting. */
+let dklpoGpsWindow_=[],dklpoGpsWindowScope_='',dklpoGpsWindowSince_=0;
+function dklpoGpsScope_(){return [currentTeam?.code||'',currentStation||''].join('|');}
+function dklpoReceiveWarmGps_(pos){
+ if(!session||!currentTeam?.code||!currentStation||document.hidden||!document.getElementById('pageInspection')?.classList.contains('active'))return;
+ const scope=dklpoGpsScope_(),c=pos?.coords,stamp=Number(pos?.timestamp),now=Date.now();
+ if(scope!==dklpoGpsWindowScope_){dklpoGpsWindow_=[];dklpoGpsWindowScope_=scope;dklpoGpsWindowSince_=now;}
+ if(!c||!Number.isFinite(stamp)||stamp<dklpoGpsWindowSince_||now-stamp<0||now-stamp>=60000||[c.latitude,c.longitude,c.accuracy].some(v=>v===null||v===undefined||String(v).trim()===''||!Number.isFinite(Number(v)))||Math.abs(Number(c.latitude))>90||Math.abs(Number(c.longitude))>180||Number(c.accuracy)<0||Number(c.accuracy)>GPS_REJECT_ACCURACY_M)return;
+ dklpoGpsWindow_=dklpoGpsWindow_.filter(s=>now-s.timestamp>=0&&now-s.timestamp<60000);
+ const last=dklpoGpsWindow_[dklpoGpsWindow_.length-1];if(last&&stamp-last.timestamp<350)return;
+ dklpoGpsWindow_.push({lat:Number(c.latitude),lng:Number(c.longitude),accuracy:Number(c.accuracy),timestamp:stamp});dklpoGpsWindow_=dklpoGpsWindow_.slice(-3);
+ if(dklpoGpsWindow_.length<GPS_MIN_SAMPLES)return;
+ const summary=summarizeGpsSamples_(dklpoGpsWindow_);if(summary.spreadM>GPS_MAX_SAMPLE_SPREAD_M)return;
+ const best=summary.best;
+ // Use the actual fix time, not the time the UI received this callback.
+ session.lat=best.lat;session.lng=best.lng;session.accuracy=best.accuracy;session.gpsCapturedAt=new Date(best.timestamp).toISOString();session.gpsSampleCount=summary.count;session.gpsSpreadM=summary.spreadM;session._dklpoGpsScope=scope;
+}
+const dklpoReceiveLiveOriginal_=geoReceiveLivePosition_;
+geoReceiveLivePosition_=function(pos){dklpoReceiveLiveOriginal_.apply(this,arguments);dklpoReceiveWarmGps_(pos);};
+const dklpoStartWatchOriginal_=startGeoDistanceWatch_;
+startGeoDistanceWatch_=function(){if(dklpoGpsWindowScope_!==dklpoGpsScope_()){dklpoGpsWindow_=[];dklpoGpsWindowScope_=dklpoGpsScope_();dklpoGpsWindowSince_=Date.now();}return dklpoStartWatchOriginal_.apply(this,arguments);};
+const dklpoStopWatchOriginal_=stopGeoDistanceWatch_;
+stopGeoDistanceWatch_=function(){dklpoGpsWindow_=[];return dklpoStopWatchOriginal_.apply(this,arguments);};
+
+navigator.serviceWorker?.addEventListener('message',e=>{
+ const d=e.data||{};if(d.type==='DKLPO_UPLOAD_PROGRESS')dklpoShowProgress_(d.id,d.phase,d.done,d.total);
+ if(d.type==='KKPAS_SYNC_SUCCESS'&&typeof dklpoConfirmedStatus_==='function')dklpoConfirmedStatus_(d.id||d.clientSubmissionId||'');
+ if(d.type==='KKPAS_SYNC_SUCCESS'&&d.clientSubmissionId===currentSubmissionId&&document.getElementById('successModal')?.classList.contains('active'))showSubmitSuccessModal({id:d.id});
+});
+
+
+/*! © Ennedey 2026. Keep the durable queue usable if a worker is unavailable. */
+(()=>{
+ const MAX_SYNC_ATTEMPTS=5,RETRY_DELAYS_MS=[60000,300000,900000,3600000,21600000];
+ let running=null,retryTimer=null;
+ const openDb_=()=>openKkpasDb_();
+ const getAllQueue_=()=>idbGetAll_('offlineQueue');
+ function syncError_(message,retryable=true,retryAfterMs=0){return Object.assign(Error(String(message||'SYNC_FAILED')),{retryable:!!retryable,retryAfterMs:Number(retryAfterMs||0)});}
+ async function formPost_(payload){
+  const r=await postToWebApp(payload,{timeoutMs:90000,retries:1});
+  if(!r?.ok){const e=syncError_(r?.error||'SUBMISSION_FAILED',r?.retryable===true,r?.retryAfterMs);if(/EDGE_AUTH|INSPECTOR_AUTH|INSPECTOR_SESSION|TOKEN_EXPIRED/.test(String(r?.error||'')))e.authRequired=true;throw e;}return r;
+ }
+ async function broadcast_(d){
+  if(d.type==='DKLPO_UPLOAD_PROGRESS')dklpoShowProgress_(d.id,d.phase,d.done,d.total);
+  if(d.type==='KKPAS_SYNC_SUCCESS'&&typeof dklpoConfirmedStatus_==='function')dklpoConfirmedStatus_(d.id||d.clientSubmissionId||'');
+ if(d.type==='KKPAS_SYNC_SUCCESS'&&d.clientSubmissionId===currentSubmissionId&&document.getElementById('successModal')?.classList.contains('active'))showSubmitSuccessModal({id:d.id});
+  if(d.type==='KKPAS_SYNC_DEAD_LETTER'&&d.stationKey){submittedStations.delete(d.stationKey);try{localStorage.setItem('dklpo_submitted_stations',JSON.stringify([...submittedStations]));}catch(_){}}
+ }
+function isPermanentSyncError_(err){
+  if(err&&err.retryable===false)return true;
+  const msg=String(err&&err.message?err.message:err||'');
+  return /Missing required|Unsupported image|Invalid base64|Empty image|Too many photos|Photo upload incomplete|GPS_(?:OUTSIDE|INVALID|STALE|LOW_INTEGRITY)|Station already inspected|INVALID_SUBMISSION/i.test(msg);
+}
+
+function nextRetryAt_(attempts,err){
+  const explicit=Number(err&&err.retryAfterMs||0);
+  const fallback=RETRY_DELAYS_MS[Math.min(Math.max(0,attempts-1),RETRY_DELAYS_MS.length-1)];
+  return new Date(Date.now()+Math.max(explicit,fallback)).toISOString();
+}
+
+const DKLPO_PIC_ONLY_=false;
+/*! © Ennedey 2026. Bounded uploads: preserve order and await in-flight work. */
+async function dklpoUploadPool_(items,limit,job){
+ const result=new Array(items.length);let cursor=0,failed=null;
+ async function worker(){while(!failed){const i=cursor++;if(i>=items.length)return;try{result[i]=await job(items[i],i);}catch(e){if(!failed)failed=e;}}}
+ await Promise.all(Array.from({length:Math.min(Math.max(1,Number(limit)||1),2,items.length)},worker));
+ if(failed)throw failed;return result;
+}
+function dklpoUploadTransient_(e){return e?.retryable===true||e?.networkError===true||/RATE_LIMIT|SERVER_BUSY|BACKEND_UNAVAILABLE|GATEWAY_FAILURE|429|timeout|Failed to fetch|NetworkError/i.test(String(e?.message||e?.error||''));}
+/*! © Ennedey 2026. Atomic queue ownership and bounded parallel photo uploads. */
+async function dklpoSwChange_(id,change){
+ const db=await openDb_();let result=null;
+ await new Promise((resolve,reject)=>{const tx=db.transaction('offlineQueue','readwrite'),store=tx.objectStore('offlineQueue'),request=store.get(id);
+  request.onsuccess=()=>{try{const old=request.result,next=change(old);if(next===false){store.delete(id);result=old;}else if(next){store.put(next);result=next;}}catch(e){reject(e);tx.abort();}};
+  tx.oncomplete=resolve;tx.onerror=tx.onabort=()=>reject(tx.error||Error('QUEUE_WRITE_FAILED'));
+ });return result;
+}
+async function dklpoSwCheckpoint_(record,release=false){
+ const saved=await dklpoSwChange_(record.id,row=>row?.owner===record.owner?{...record,owner:release?'':record.owner,leaseUntil:release?0:Date.now()+120000,lastAttemptAt:new Date().toISOString()}:null);
+ if(!saved)throw Error('QUEUE_LEASE_LOST');return saved;
+}
+async function syncOne_(record){
+ if(!record||['DEAD_LETTER','EDITING'].includes(record.status)||(DKLPO_PIC_ONLY_&&record.type!=='ADHOC_V13'))return {skipped:true};
+ const claimed=await dklpoSwChange_(record.id,row=>{
+  if(!row||['DEAD_LETTER','EDITING'].includes(row.status)||Date.parse(row.nextAttemptAt||'')>Date.now())return null;
+  if(Number(row.leaseUntil)>Date.now()&&(row.owner||['DIRECT_SENDING','SENDING','SYNCING'].includes(row.status)))return null;
+  if(row.status==='SYNCING'&&Date.now()-Date.parse(row.lastAttemptAt||'')<120000)return null;
+  return {...row,owner:'SW-'+(self.crypto?.randomUUID?self.crypto.randomUUID():Date.now()+'-'+Math.random()),leaseUntil:Date.now()+120000,status:'SYNCING',attempts:Number(row.attempts||0)+1,lastAttemptAt:new Date().toISOString(),nextAttemptAt:''};
+ });
+ if(!claimed)return {skipped:true,retry:true};Object.assign(record,claimed);
+ let lost=false,writes=Promise.resolve(),done=0;
+ const checkpoint=()=>{writes=writes.then(()=>dklpoSwCheckpoint_(record));return writes;};
+ const heartbeat=setInterval(()=>{dklpoSwChange_(record.id,row=>row?.owner===record.owner?{...row,leaseUntil:Date.now()+120000,lastAttemptAt:new Date().toISOString()}:null).then(r=>{if(!r)lost=true;}).catch(()=>{});},15000);
+ const progress=(phase,total)=>(broadcast_({type:'DKLPO_UPLOAD_PROGRESS',id:record.id,phase,done,total}));
+ try{
+  const photos=Array.isArray(record.photos)?record.photos:[],map={...(record.uploadedPhotoMap||{})},adhoc=record.type==='ADHOC_V13',p=record.payload||{};
+  await progress('uploading',photos.length);
+  let uploaded;
+  try{uploaded=await dklpoUploadPool_(photos,record.uploadConcurrency===1?1:2,async(ph,i)=>{
+   if(lost)throw Error('QUEUE_LEASE_LOST');
+   const stable=String(ph?.id??'legacy-'+(i+1)).replace(/[^a-zA-Z0-9_-]/g,'_').slice(0,70),key=adhoc?record.id+'-ADHOC-'+(i+1):record.id+'-PHOTO-'+stable;
+   let receipt=map[key];if(!receipt&&!record.uploadedPhotoMap&&!adhoc)receipt=record.uploadedPhotoUrls?.[i];
+   if(!receipt||(adhoc?!receipt.fileId:!receipt.url)){
+    const req=adhoc?{action:'uploadAdhocFindingPhoto',reporterName:p.reporterName,station:p.station,month:p.month||['January','February','March','April','May','June','July','August','September','October','November','December'][new Date(record.createdAt||Date.now()).getMonth()],index:i+1,base64:ph.data,comment:ph.comment||'',uploadKey:key}:{action:'uploadPhoto',teamCode:p.teamCode,inspectorAuth:p.inspectorAuth||p.inspectorToken||'',checklistVersion:p.checklistVersion||'',uploadKey:key,month:p.month,station:p.station,inspectorName:p.inspectorName,base64:ph.data,comment:ph.comment||'',index:i+1,filename:ph.filename||`photo_${i+1}.jpg`};
+    const r=await formPost_(req);if(adhoc?!r?.fileId:!r?.url)throw syncError_('UPLOAD_RECEIPT_MISSING',true);
+    receipt={url:r.url||'',fileId:r.fileId||'',resourceKey:r.resourceKey||''};map[key]=receipt;record.uploadedPhotoMap=map;await checkpoint();
+   }
+   done++;await progress('uploading',photos.length);
+   return adhoc?{fileId:receipt.fileId,comment:ph.comment||''}:{...receipt,comment:ph.comment||'',findingKey:ph.findingKey||'',index:i+1,reviewAnalysis:ph.reviewAnalysis||null,reviewAccepted:ph.reviewAccepted||null,reviewedAt:ph.reviewedAt||''};
+  });await writes;}catch(e){if(dklpoUploadTransient_(e)){record.uploadConcurrency=1;await checkpoint().catch(()=>{});}throw e;}
+  if(lost)throw Error('QUEUE_LEASE_LOST');await progress('submitting',photos.length);
+  record.uploadedPhotoUrls=uploaded;await checkpoint();
+  const payload=adhoc?{...p,issueAction:p.issueAction||p.action||'',action:'submitAdhocFinding',photos:JSON.stringify(uploaded)}:{...p,action:'submitInspection',clientSubmissionId:p.clientSubmissionId||record.id,offlineQueuedAt:record.createdAt||'',syncAttempt:record.attempts,checklist:typeof p.checklist==='string'?p.checklist:JSON.stringify(p.checklist||[]),photos:JSON.stringify(uploaded),findings:typeof p.findings==='string'?p.findings:JSON.stringify(p.findings||[])};
+  const result=await formPost_(payload);if(adhoc?!result?.findingId:!result?.id)throw syncError_('SUBMISSION_RECEIPT_MISSING',true);
+  const removed=await dklpoSwChange_(record.id,row=>row?.owner===record.owner?false:null);if(!removed)throw Error('QUEUE_LEASE_LOST');
+  await progress('success',photos.length);await broadcast_({type:adhoc?'KKPAS_ADHOC_SYNC_SUCCESS':'KKPAS_SYNC_SUCCESS',station:p.station,id:result.id||'',clientSubmissionId:record.id,findingId:result.findingId||''});
+  try{await self.registration.showNotification(adhoc?'Laporan NCR/CAR/PAR Berjaya':'KKPAS Sync Berjaya',{body:p.station+' • '+(result.id||result.findingId||''),tag:'dklpo-'+record.id,data:{url:'./'}});}catch(_){}
+  return {ok:true};
+ }catch(e){await progress(e.retryable===false?'review':'pending',(record.photos||[]).length);throw e;}
+ finally{clearInterval(heartbeat);}
+}
+async function syncAdhocV13_(record){return syncOne_(record);}
+
+async function processQueue_(){
+  const rows=(await getAllQueue_()).sort((a,b)=>String(a.createdAt||'').localeCompare(String(b.createdAt||'')));
+  let synced=0,failed=0,dead=0,skipped=0,needsRetry=false;
+  for(const row of rows){
+    if(!row||['DEAD_LETTER','EDITING'].includes(row.status)){dead++;continue;}
+    if(row.nextAttemptAt&&new Date(row.nextAttemptAt).getTime()>Date.now()){skipped++;needsRetry=true;continue;}
+    if(row.status==='DIRECT_SENDING'&&Number(row.leaseUntil||0)>Date.now()){
+      skipped++;needsRetry=true;continue;
+    }
+    const previousAttempts=Number(row.attempts||0);
+    try{
+      const result=await syncOne_(row);
+      if(result&&result.ok)synced++;else {skipped++;if(result?.retry)needsRetry=true;}
+    }catch(e){
+      if(e.message==='QUEUE_LEASE_LOST'){skipped++;needsRetry=true;continue;}
+      if(e.authRequired){row.attempts=previousAttempts;row.status='AUTH_REQUIRED';row.nextAttemptAt='';row.lastError=String(e.message);await dklpoSwCheckpoint_(row,true);skipped++;needsRetry=true;continue;}
+      failed++;
+      row.lastError=String(e&&e.message?e.message:e);
+      row.lastErrorAt=new Date().toISOString();
+      const permanent=isPermanentSyncError_(e);
+      if(permanent||Number(row.attempts||0)>=MAX_SYNC_ATTEMPTS){
+        row.status='DEAD_LETTER';
+        row.nextAttemptAt='';
+        row.deadLetterAt=new Date().toISOString();
+        await dklpoSwCheckpoint_(row,true);
+        await broadcast_({type:'KKPAS_SYNC_DEAD_LETTER',station:row.payload&&row.payload.station,stationKey:row.stationKey||'',error:row.lastError,attempts:row.attempts});
+        try{await self.registration.showNotification('KKPAS Sync Perlu Tindakan',{body:`${row.payload&&row.payload.station||'Pemeriksaan'} gagal dihantar selepas ${row.attempts} percubaan. Buka KKPAS untuk semakan.`,icon:'https://arleta.site/interactivelink/3333/DKLPO_Master_192.png',tag:'kkpas-dead-'+row.id,data:{url:'./'}})}catch(_){ }
+        dead++;
+      }else{
+        row.status='QUEUED';
+        row.nextAttemptAt=nextRetryAt_(Number(row.attempts||0),e);
+        await dklpoSwCheckpoint_(row,true);
+        await broadcast_({type:'KKPAS_SYNC_ERROR',station:row.payload&&row.payload.station,error:row.lastError,attempts:row.attempts,nextAttemptAt:row.nextAttemptAt});
+        needsRetry=true;
+      }
+       
+    }
+  }
+  const summary={synced,failed,dead,skipped};
+   
+   
+  if(needsRetry){const err=new Error('KKPAS_QUEUE_RETRY_PENDING');err.summary=summary;throw err;}
+  return summary;
+}
+
+
+ function start(){
+  if(running||!navigator.onLine||document.hidden)return;
+  window.dklpoInPageSyncActive_=true;
+  running=processQueue_().catch(e=>{if(e.message!=='KKPAS_QUEUE_RETRY_PENDING')console.warn('Saved queue is pending:',e);clearTimeout(retryTimer);retryTimer=setTimeout(start,30000);}).finally(()=>{running=null;window.dklpoInPageSyncActive_=false;});
+ }
+ const originalRegister=registerOfflineSync_;
+ registerOfflineSync_=async function(){
+  Promise.resolve(originalRegister.apply(this,arguments)).catch(()=>{});
+  const ready=navigator.serviceWorker?.ready;
+  const reg=ready?await Promise.race([ready.catch(()=>null),new Promise(resolve=>setTimeout(()=>resolve(null),1500))]):null;
+  if(!reg?.active)start();
+ };
+ document.addEventListener('visibilitychange',()=>{if(!document.hidden)registerOfflineSync_();});
+})();
+
+</script>
+<script>
+/*! UX-2: recover failed inspection without deleting the original queue record. */
+function dklpoDecode_(value,fallback){try{return typeof value==='string'?JSON.parse(value):value??fallback;}catch{return fallback;}}
+function dklpoRecoveryDraft_(row,activeSession){
+ const p=row.payload||{};
+ if(!activeSession?.team?.code||p.teamCode!==activeSession.team.code||p.month!==activeSession.month||Number(p.year)!==Number(activeSession.year))throw Error('Log masuk sebagai pasukan dan bulan/tahun laporan ini sebelum membuka semula borang.');
+ const items=dklpoDecode_(p.checklist,[]),findings=dklpoDecode_(p.findings,[]);
+ if(!p.station||!Array.isArray(items)||!Array.isArray(findings)||!Array.isArray(row.photos))throw Error('Format laporan tidak serasi. Bukti asal dikekalkan.');
+ const cleanSession={...activeSession};for(const k of ['lat','lng','accuracy','gpsCapturedAt','gpsSampleCount','gpsSpreadM','_dklpoGpsScope'])delete cleanSession[k];
+ return {station:p.station,checklist:Object.fromEntries(items.map(r=>[r.item,r.status])),findings:Object.fromEntries(findings.map(r=>[r.itemKey,r])),photos:structuredClone(row.photos),rating:Number(p.rating||0),comment:p.comment||'',aiInsight:p.aiInsight||'',submissionId:row.id,timestamp:Date.now(),session:cleanSession,inspectionLang:p.inspectionLang||'ms',checklistVersion:p.checklistVersion||''};
+}
+
+async function dklpoRecoveryChange_(id,change){
+ const db=await openKkpasDb_();return new Promise((resolve,reject)=>{
+  const tx=db.transaction('offlineQueue','readwrite'),store=tx.objectStore('offlineQueue'),request=store.get(id);let result;
+  request.onsuccess=()=>{try{result=change(request.result);if(result)store.put(result);}catch(e){tx.abort();reject(e);}};
+  tx.oncomplete=()=>resolve(result);tx.onerror=tx.onabort=()=>reject(tx.error||Error('Tidak dapat mengunci laporan pemulihan.'));
+ });
+}
+
+async function dklpoReopenInspection_(id){
+ try{
+  const get=await idbGet_('offlineQueue',id);if(!get||get.type==='ADHOC_V13'||!['DEAD_LETTER','NEEDS_RETRY','AUTH_REQUIRED','EDITING'].includes(get.status))throw Error('Laporan ini belum tersedia untuk dibuka semula.');
+  const draft=dklpoRecoveryDraft_(get,session),key=typeof KKPAS_DRAFT_KEY!=='undefined'?KKPAS_DRAFT_KEY:DKLPO_BROWSER_DRAFT_KEY;
+  if(isSubmitting)throw Error('Tunggu penghantaran semasa selesai.');
+  const previous=await idbGet_('drafts',key);
+  if((previous&&previous.submissionId!==id)||(currentStation&&currentSubmissionId!==id&&!hasSubmittedCurrent)){
+   if(!confirm('Buka laporan gagal ini? Draf semasa akan disimpan sebagai salinan pemulihan pada peranti.'))return;
+   if(currentStation&&currentSubmissionId!==id&&!hasSubmittedCurrent){const saved=await saveDraft();if(saved===false)throw Error('Draf semasa belum selamat disimpan.');}
+   const backup=await idbGet_('drafts',key);if(backup)await idbPut_('kv',{key:'DKLPO_RECOVERY_BACKUP:'+Date.now(),value:backup});
+  }
+  const change=dklpoRecoveryChange_;
+  const claimed=await change(id,row=>row&&['DEAD_LETTER','NEEDS_RETRY','AUTH_REQUIRED','EDITING'].includes(row.status)&&!(Number(row.leaseUntil)>Date.now()&&row.owner)?{...row,status:'EDITING',owner:'',leaseUntil:0,nextAttemptAt:'',reopenedAt:new Date().toISOString()}:null);
+  if(!claimed)throw Error('Laporan sedang digunakan. Cuba semula.');
+  draft.id=key;
+  await idbPut_('drafts',draft);
+  const stationKey=[draft.session.year,draft.session.month,draft.session.team.code,draft.station].join('-');
+  submittedStations.delete(stationKey);try{localStorage.setItem('dklpo_submitted_stations',JSON.stringify([...submittedStations]));}catch(_){}
+  session=draft.session;hasSubmittedCurrent=false;stopGeoDistanceWatch_();dklpoGpsWindow_=[];dklpoGpsWindowSince_=Date.now();
+  await restoreDraft();
+  if(currentStation!==draft.station||currentSubmissionId!==id)throw Error('Borang belum dapat dipulihkan. Sambung semula melalui Draf atau cuba butang ini semula.');
+  if(get.payload.fire)await IMSMainFire.importQueuedFire(dklpoDecode_(get.payload.fire,null));
+  document.querySelectorAll('.modal.active').forEach(el=>{if(el.id!=='draftModal')el.classList.remove('active');});
+  showToast('Laporan dibuka semula bersama gambar dan catatan. Semak daftar bomba dan ambil bacaan GPS baharu sebelum menghantar.','success');
+ }catch(e){showToast(String(e.message||e),'error');}
+}
+async function dklpoAddRecoveryButtons_(){
+ const root=document.getElementById('notificationCentreBody')||document.getElementById('notificationBody');
+ for(const button of document.querySelectorAll('button[onclick*="retryOfflineQueueItem_"]')){
+  if(button.parentElement.querySelector('[data-reopen-id]'))continue;
+  const id=button.getAttribute('onclick')?.match(/retryOfflineQueueItem_\('([^']+)'\)/)?.[1];if(!id)continue;
+  const row=await idbGet_('offlineQueue',id);if(!row||row.type==='ADHOC_V13'||!['DEAD_LETTER','NEEDS_RETRY','AUTH_REQUIRED','EDITING'].includes(row.status))continue;
+  const b=document.createElement('button');b.type='button';b.className='btn-secondary';b.dataset.reopenId=id;b.textContent='Buka Semula dalam Borang';b.onclick=()=>dklpoReopenInspection_(id);button.after(b);
+ }
+}
+if(typeof appendOfflineQueueStatusToNotificationCentre_==='function'){
+ const prior=appendOfflineQueueStatusToNotificationCentre_;appendOfflineQueueStatusToNotificationCentre_=async function(){await prior.apply(this,arguments);await dklpoAddRecoveryButtons_();};
+}
+if(typeof browserQueueRender_==='function'){
+ const prior=browserQueueRender_;browserQueueRender_=async function(){await prior.apply(this,arguments);const root=document.getElementById('browserQueueRows');if(!root)return;const rows=await idbGetAll_('offlineQueue');for(let i=0;i<rows.length;i++){const row=rows[i];if(row.type==='ADHOC_V13'||!['DEAD_LETTER','NEEDS_RETRY','AUTH_REQUIRED','EDITING'].includes(row.status))continue;const box=root.children[i];if(!box)continue;const b=document.createElement('button');b.type='button';b.textContent='Buka Semula dalam Borang';b.onclick=()=>dklpoReopenInspection_(row.id);box.append(b);}};
+}
+const dklpoProgressBeforeStatus_=dklpoShowProgress_;
+dklpoShowProgress_=function(id,phase,...rest){dklpoProgressBeforeStatus_.call(this,id,phase,...rest);if(phase==='success')dklpoConfirmedStatus_(id);};
+function dklpoConfirmedStatus_(id){
+ let el=document.getElementById('dklpoConfirmedReport');if(!el){el=document.createElement('aside');el.id='dklpoConfirmedReport';el.style.cssText='position:fixed;bottom:185px;left:12px;right:12px;max-width:560px;margin:auto;z-index:981;padding:16px;border:1px solid #10b981;border-radius:12px;background:#052e25;color:white;font:14px system-ui';document.body.append(el);}
+ el.replaceChildren();const text=document.createElement('p');text.textContent='Pemeriksaan berjaya diterima dan disimpan dalam sistem. Sila semak status terkini laporan anda melalui pautan di bawah. ID: '+id+'. Kata laluan Viewer: Dklpo1234';
+ const link=document.createElement('a');link.href='https://ennedey.app/view_laporan_pemeriksaan';link.target='_blank';link.rel='noopener noreferrer';link.textContent='Semak Status Pemeriksaan';link.style.cssText='display:inline-block;padding:10px;background:#10b981;border-radius:8px;color:#052e25;font-weight:700';
+ const close=document.createElement('button');close.textContent='Tutup';close.type='button';close.style.marginLeft='10px';close.onclick=()=>el.remove();el.append(text,link,close);
+}
+if('serviceWorker'in navigator)navigator.serviceWorker.addEventListener('message',e=>{if(e.data?.type==='KKPAS_SYNC_SUCCESS')dklpoConfirmedStatus_(e.data.id||e.data.clientSubmissionId||'');});
+
+</script>
+<script>
+/*! UX-2: early device storage warning and coordinated safe PWA activation. */
+let dklpoStorageCheckAt_=0,dklpoUpdateHold_=false;
+async function dklpoStorageEstimate_(force=false){
+ if(!navigator.storage?.estimate||!force&&Date.now()-dklpoStorageCheckAt_<30000)return null;
+ dklpoStorageCheckAt_=Date.now();try{
+  const value=await navigator.storage.estimate(),usage=Number(value.usage||0),quota=Number(value.quota||0);
+  if(!quota)return null;const available=quota-usage,low=usage/quota>=0.8||available<30*1024*1024;
+  let el=document.getElementById('dklpoStorageWarning');
+  if(low&&!el){el=document.createElement('aside');el.id='dklpoStorageWarning';el.setAttribute('role','alert');el.style.cssText='position:fixed;top:8px;left:10px;right:10px;max-width:620px;margin:auto;z-index:1900;background:#78350f;color:#fff;padding:12px;border:1px solid #fbbf24;border-radius:10px;font:14px system-ui';document.body.append(el);}
+  if(el){el.hidden=!low;el.textContent='Ruang storan peranti hampir penuh ('+Math.max(0,Math.round(available/1048576))+' MB berbaki). Hantar laporan tertangguh apabila ada internet. Jangan padam data aplikasi sebelum semua laporan disahkan diterima.';}
+  return {low,available,usage,quota};
+ }catch{return null;}
+}
+async function dklpoSafeToUpdate_(){
+ if(typeof isSubmitting!=='undefined'&&isSubmitting||typeof syncingOfflineQueue!=='undefined'&&syncingOfflineQueue||typeof adhocBusyV13_!=='undefined'&&adhocBusyV13_||window.dklpoInPageSyncActive_)return false;
+ if(typeof currentStation!=='undefined'&&currentStation&&typeof hasSubmittedCurrent!=='undefined'&&!hasSubmittedCurrent)return false;
+ if(typeof dklpoBrowserSending_!=='undefined'&&dklpoBrowserSending_.size)return false;
+ try{
+  if(typeof idbGetAll_==='function'){
+   if((await idbGetAll_('offlineQueue')).length)return false;
+   if((await idbGetAll_('drafts')).length)return false;
+  }
+  if(typeof picDb_==='function'&&(await dklpoDbRequest_(await picDb_(),'drafts','readonly','getAll')).length)return false;
+  if(typeof getFullOfflineQueue_==='function'&&(await getFullOfflineQueue_()).length)return false;
+  if(typeof adhocTxV13_==='function'&&(await adhocTxV13_('readonly','getAll')).some(r=>r?.type==='ADHOC_V13'))return false;
+  if(document.querySelector('dialog[open],.modal.active,.modal.show,[aria-modal="true"]'))return false;
+  if(typeof adhocPhotosV13_!=='undefined'&&adhocPhotosV13_.length)return false;
+  // Unsaved typed text/files also holds an update until the user finishes.
+  if([...document.querySelectorAll('textarea,input[type="file"]')].some(e=>e.getClientRects().length&&(e.type==='file'?e.files?.length:String(e.value||'').trim())))return false;
+  return true;
+ }catch{return false;}
+}
+function dklpoReleaseUpdateHold_(){dklpoUpdateHold_=false;document.body.inert=false;}
+async function dklpoInitUpdate_(){
+ dklpoStorageEstimate_(true);if(!('serviceWorker'in navigator))return;
+ const reg=await navigator.serviceWorker.getRegistration();if(!reg)return;
+ let requested=false;
+ let button=document.getElementById('dklpoSafeUpdate');if(!button){button=document.createElement('button');button.id='dklpoSafeUpdate';button.type='button';button.hidden=true;button.textContent='Kemas kini aplikasi tersedia';button.style.cssText='position:fixed;right:12px;top:70px;z-index:1899;padding:12px;border:0;border-radius:10px;background:#0369a1;color:white';document.body.append(button);}
+ async function refresh(){button.hidden=!reg.waiting||!navigator.serviceWorker.controller||!await dklpoSafeToUpdate_();}
+ button.onclick=async()=>{if(!reg.waiting||!await dklpoSafeToUpdate_())return;requested=true;button.disabled=true;reg.waiting.postMessage({type:'DKLPO_SAFE_UPDATE'});setTimeout(()=>{if(requested){requested=false;button.disabled=false;dklpoReleaseUpdateHold_();refresh();}},12000);};
+ reg.addEventListener('updatefound',()=>{const sw=reg.installing;sw?.addEventListener('statechange',()=>{if(sw.state==='installed')refresh();});});
+ navigator.serviceWorker.addEventListener('message',async e=>{
+  if(e.data?.type==='DKLPO_UPDATE_PROBE'){
+   const safe=await dklpoSafeToUpdate_();if(safe){dklpoUpdateHold_=true;document.body.inert=true;setTimeout(dklpoReleaseUpdateHold_,10000);}
+   e.ports?.[0]?.postMessage({safe});
+  }
+  if(e.data?.type==='DKLPO_UPDATE_BLOCKED'){requested=false;button.disabled=false;dklpoReleaseUpdateHold_();refresh();}
+ });
+ navigator.serviceWorker.addEventListener('controllerchange',async()=>{if(dklpoUpdateHold_||requested){location.reload();}else refresh();});
+ setInterval(refresh,5000);await refresh();
+}
+document.addEventListener('DOMContentLoaded',()=>{dklpoInitUpdate_().catch(()=>{});setInterval(()=>dklpoStorageEstimate_(),60000);});
+document.addEventListener('change',e=>{if(e.target?.matches('input[type="file"]'))dklpoStorageEstimate_(true);},true);
+document.addEventListener('click',e=>{if(e.target?.closest('input[type="file"],button'))dklpoStorageEstimate_();},true);
 
 </script>
 </body></html>
