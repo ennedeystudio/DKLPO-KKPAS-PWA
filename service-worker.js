@@ -55,7 +55,7 @@ function dklpoDbRequest_(db, store, mode, method, value, key) {
 }
 
 const CACHE_PREFIX = 'kkpas-inspector-' + encodeURIComponent(self.registration.scope) + '-';
-const CACHE_NAME = CACHE_PREFIX + 'comfort-20261117-ux-2';
+const CACHE_NAME = CACHE_PREFIX + 'comfort-20261124-fire-r2';
 const APP_SHELL = ['./', './index.html', './manifest.json'];
 
 self.addEventListener('install', event => {
