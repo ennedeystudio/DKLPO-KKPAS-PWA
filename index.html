@@ -81,11 +81,10 @@ border-color: var(--brand);
 
  
 .logout-top {
-position: fixed;
-top: calc(var(--safe-top) + 10px);
-left: 16px;
-z-index: 1000;
-padding: 8px 16px;
+flex-shrink: 0;
+min-height: 40px;
+padding: 8px 12px;
+white-space: nowrap;
 border-radius: 20px;
 border: 1px solid var(--bad);
 background: rgba(239,68,68,0.1);
@@ -93,15 +92,16 @@ color: var(--bad);
 font-size: 13px;
 font-weight: 600;
 cursor: pointer;
-display: none;
 }
 
+#btnLogout { display: none; }
+
 .status-bar {
-height: calc(var(--safe-top) + 44px);
+min-height: calc(var(--safe-top) + 54px);
 background: linear-gradient(180deg, rgba(11,18,32,0.98), rgba(11,18,32,0.9));
 position: sticky; top: 0; z-index: 100;
-display: flex; align-items: flex-end;
-padding: 8px 16px calc(var(--safe-top) + 8px);
+display: flex; align-items: center; gap: 12px;
+padding: calc(var(--safe-top) + 6px) 12px 6px;
 border-bottom: 1px solid var(--stroke);
 backdrop-filter: blur(20px);
 }
@@ -110,7 +110,34 @@ backdrop-filter: blur(20px);
 background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248,250,252,0.95));
 }
 
-.status-bar .title { font-size: 17px; font-weight: 700; flex: 1; text-align: center; }
+.status-bar .title { min-width: 0; font-size: 17px; font-weight: 700; flex: 1; text-align: center; }
+
+
+#imsMainFire, #imsMainFire .imf-validation-error {
+scroll-margin-top: calc(var(--safe-top) + 120px);
+}
+#imsMainFire .imf-card {
+min-inline-size: 0; margin: 14px 0; padding: 12px;
+border: 1px solid #94a3b8; border-radius: 10px;
+}
+#imsMainFire .imf-field { display: block; margin: 8px 0; }
+#imsMainFire .imf-option {
+display: flex; align-items: center; gap: 8px;
+min-height: 40px; padding: 4px 0;
+}
+#imsMainFire .imf-option input { flex: none; width: 18px; height: 18px; margin: 0; }
+#imsMainFire .imf-photo-links { min-inline-size: 0; border: 0; padding: 8px 0; margin: 12px 0; }
+#imsMainFire .imf-photo-links legend { font-weight: 600; padding: 0; }
+#imsMainFire .imf-photo-actions { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; }
+#imsMainFire .imf-photo-actions button { margin-top: 0; }
+#imsMainFire .imf-validation-error, #imsMainFire .imf-cache-notice {
+margin: 12px 0; padding: 10px 12px; color: var(--text);
+background: var(--surface-elevated); border-radius: var(--radius-sm);
+border-inline-start: 4px solid var(--bad); overflow-wrap: anywhere;
+}
+#imsMainFire .imf-cache-notice { border-inline-start-color: var(--warn); }
+#imsMainFire [aria-invalid="true"] { outline: 2px solid var(--bad); outline-offset: 2px; }
+#imsMainFire [data-imf-evidence][aria-invalid="true"] { outline-offset: 4px; }
 
 .main-content { padding: 16px; max-width: 100%; padding-bottom: calc(100px + var(--safe-bottom)); }
 
@@ -993,11 +1020,10 @@ select:is([id*="month" i], [id*="year" i]):focus-visible,
 
 <div class="page" id="pageInspection">
 
-<button class="logout-top" id="btnLogout" onclick="doLogout()">
+<div class="status-bar">
+<button type="button" class="logout-top" id="btnLogout" onclick="doLogout()">
 🚪 <span data-ms="Keluar" data-en="Logout">Keluar</span>
 </button>
-
-<div class="status-bar">
 <div class="title" id="pageTitle" data-ms="Pemeriksaan" data-en="Inspection">Pemeriksaan</div>
 </div>
 
@@ -3636,8 +3662,10 @@ navigator.serviceWorker?.addEventListener('message', (event) => {
 
 
 <div class="page" id="pageAdhocV13">
-  <button type="button" class="logout-top" style="display:block" onclick="adhocCloseV13_()">← Kembali</button>
-  <div class="status-bar"><div class="title">🚨 Lapor Isu NCR / CAR / PAR</div></div>
+  <div class="status-bar">
+    <button type="button" class="logout-top" onclick="adhocCloseV13_()">← Kembali</button>
+    <div class="title">🚨 Lapor Isu NCR / CAR / PAR</div>
+  </div>
   <div class="main-content">
     <div class="card-mobile"><p>Laporan bebas bagi mana-mana stesen, tanpa masuk pemeriksaan bulanan. Semua butiran akan dihantar untuk tindakan PIC dan pemantauan Admin.</p></div>
     <div class="card-mobile">
@@ -3914,60 +3942,418 @@ const IMSMainFire=(()=>{
  const scope=c=>[c.teamCode,c.year,c.month,c.station,c.submissionId].join('|');
  const key=c=>'IMS_MAIN_FIRE_V1:'+scope(c);
  const origPut=idbPut_,origGet=idbGet_;let state=null,loading=null,sequence=0,writes=Promise.resolve(),busy=0,submitPending=false;
- let persistTimer=null;
+ let persistTimer=null, issueField=null, restoringDraft=0;
+ const maxPhotos=12;
+ const photoTypes=['image/jpeg','image/jpg','image/png','image/webp'];
  const types=['hose_reel','break_glass','hydrant','fixed_monitor'];
  const applicable=a=>a&&types.includes(a.type)&&![0,'0',false].includes(a.inspection_enabled)&&['active','expired'].includes(a.lifecycle);
  function validRegistry(r){return r?.ok===true&&r.checklistVersion===2&&Array.isArray(r.assets)&&r.assets.every(a=>a&&typeof a.id==='string'&&a.id.trim()&&typeof a.lifecycle==='string'&&[...types,'extinguisher'].includes(a.type)&&(a.inspection_enabled===undefined||[0,'0',false,1,'1',true].includes(a.inspection_enabled)))&&new Set(r.assets.filter(applicable).map(a=>a.id)).size===r.assets.filter(applicable).length&&r.assets.filter(applicable).every(a=>Array.isArray(r.checks?.[a.type])&&r.checks[a.type].length&&r.checks[a.type].every(k=>typeof k==='string'&&k)&&new Set(r.checks[a.type]).size===r.checks[a.type].length);}
  function root(){let el=document.getElementById('imsMainFire');if(!el){el=document.createElement('section');el.id='imsMainFire';el.className='card-mobile';document.getElementById('checklistContainer')?.after(el);}return el;}
  function status(message,error=false){const el=document.querySelector('#imfStatus');if(el){el.textContent=message;el.style.color=error?'#ef4444':'';}}
  const label=(k,r)=>({pressure:tr('Tekanan','Pressure'),nozzle:tr('Nozzle / hos','Nozzle / hose'),cylinder:tr('Keadaan silinder','Cylinder condition'),safety_pin:tr('Pin keselamatan','Safety pin'),sign:tr('Tanda / label','Sign / label'),status:tr('Keadaan / fungsi','Condition / function')})[k]||r.labels?.[k]||k;
+ const heading=()=>`<h3>🔥 ${tr('Pemeriksaan sistem melawan kebakaran','Fire safety inspection')}</h3>`;
+ const photoName=index=>tr(`Gambar #${index+1}`,`Photo #${index+1}`);
+ const photoLinks=photo=>Array.isArray(photo.assetIds)?photo.assetIds:[];
+ const assetIndex=registry=>new Map(registry.assets.filter(applicable).map(asset=>[asset.id,asset]));
+ const activeForm=current=>current&&current===state&&scope(current.context)===scope(context());
+
  function collect(){
-  if(!state)return null;const el=root();if(!el.querySelector('[data-imf-attest]'))return state;
-  state.fire.attested=el.querySelector('[data-imf-attest]').checked;
+  if(!state)return null;
+  const el=root(),attestation=el.querySelector('[data-imf-attest]');
+  if(!attestation)return state;
+  state.fire.attested=attestation.checked;
   state.fire.lateReason=el.querySelector('[data-imf-late]')?.value||'';
-  for(const item of state.fire.items){for(const input of el.querySelectorAll('[data-imf-check]'))if(input.dataset.imfAsset===item.id)item.checks[input.dataset.imfCheck]=input.value;const note=[...el.querySelectorAll('[data-imf-note]')].find(n=>n.dataset.imfNote===item.id);if(note)item.remarks=note.value;}
-  for(const [i,photo] of state.fire.photos.entries()){const input=el.querySelector(`[data-imf-location="${i}"]`);if(input)photo.location=input.value;photo.assetIds=[...el.querySelectorAll(`[data-imf-photo="${i}"]:checked`)].map(n=>n.value);}
+  const items=new Map(state.fire.items.map(item=>[item.id,item]));
+  for(const input of el.querySelectorAll('[data-imf-check]')){
+   const item=items.get(input.dataset.imfAsset);
+   if(item)item.checks[input.dataset.imfCheck]=input.value;
+  }
+  for(const input of el.querySelectorAll('[data-imf-note]')){
+   const item=items.get(input.dataset.imfNote);
+   if(item)item.remarks=input.value;
+  }
+  for(const [i,photo] of state.fire.photos.entries()){
+   const input=el.querySelector(`[data-imf-location="${i}"]`);
+   if(!input)continue;
+   photo.location=input.value;
+   const obsolete=photoLinks(photo).filter(id=>!items.has(id));
+   const checked=[...el.querySelectorAll(`[data-imf-photo="${i}"]:checked`)].map(node=>node.value);
+   photo.assetIds=[...obsolete,...checked];
+  }
   return state;
  }
- async function persist(){if(!state)return;const value=clone(collect()),record={key:key(value.context),value};writes=writes.catch(()=>{}).then(()=>origPut('kv',record));await writes;}
+
+ async function persist(){
+  clearTimeout(persistTimer);
+  persistTimer=null;
+  if(!state)return;
+  const value=clone(collect()),record={key:key(value.context),value};
+  writes=writes.catch(()=>{}).then(()=>origPut('kv',record));
+  await writes;
+ }
+
+ function renderEquipment(item,asset,registry){
+  const options=[['OK',tr('Baik','Good')],['NOT_OK',tr('Tidak baik','Not good')],['NOT_INSPECTED',tr('Tidak dapat diperiksa','Unable to inspect')]];
+  return `<fieldset class="imf-card">
+    <legend>${esc(asset.code||item.id)} · ${esc(registry.types?.[asset.type]||asset.type)}</legend>
+    <p>${esc(asset.location_name)} · ${tr('Siri','Serial')}: ${esc(asset.serial||'—')} · ${tr('Luput','Expiry')}: ${esc(asset.expiry_date||'—')}</p>
+    ${registry.checks[item.type].map(k=>`<label class="imf-field">${esc(label(k,registry))}
+      <select class="form-control" data-imf-asset="${esc(item.id)}" data-imf-check="${esc(k)}">
+        <option value="">${tr('— Pilih keputusan —','— Select result —')}</option>
+        ${options.map(([value,name])=>`<option value="${value}" ${item.checks[k]===value?'selected':''}>${name}</option>`).join('')}
+      </select>
+    </label>`).join('')}
+    <label class="imf-field">${tr('Catatan / sebab (wajib jika bukan Baik)','Remarks / reason (required unless Good)')}
+      <textarea class="form-control" data-imf-note="${esc(item.id)}" maxlength="2000">${esc(item.remarks||'')}</textarea>
+    </label>
+  </fieldset>`;
+ }
+
+ function renderPhoto(photo,index,assets){
+  const matched=photoLinks(photo);
+  const hasObsoleteLinks=matched.some(id=>!assets.has(id));
+  return `<fieldset class="imf-card">
+    <legend>${photoName(index)}</legend>
+    <img src="${esc(photo.data)}" alt="${photoName(index)}" style="max-width:100%;max-height:220px">
+    <label class="imf-field">${tr('Lokasi gambar (wajib)','Photo location (required)')}
+      <input class="form-control" data-imf-location="${index}" value="${esc(photo.location)}" maxlength="160" required>
+    </label>
+    <fieldset class="imf-photo-links" data-imf-links="${index}">
+      <legend>${tr('Peralatan yang kelihatan dalam gambar ini','Equipment visible in this photo')}</legend>
+      ${hasObsoleteLinks?`<p>${tr('Padanan lama merujuk peralatan yang tiada dalam daftar semasa.','Previous links refer to equipment missing from the current register.')}</p>
+        <button class="btn-secondary" type="button" data-imf-clear-links="${index}">${tr('Buang padanan lama','Remove obsolete links')}</button>`:''}
+      ${[...assets.values()].map(asset=>`<label class="imf-option">
+        <input type="checkbox" data-imf-photo="${index}" value="${esc(asset.id)}" ${matched.includes(asset.id)?'checked':''}> ${esc(asset.code||asset.id)}
+      </label>`).join('')}
+    </fieldset>
+    <button class="btn-secondary" type="button" data-imf-remove="${index}">${tr('Buang gambar','Remove photo')}</button>
+  </fieldset>`;
+ }
+
  function render(){
-  const el=root();if(!state){el.innerHTML='<h3>'+tr('Pemeriksaan sistem melawan kebakaran','Fire safety inspection')+'</h3><p>'+tr('Memuatkan daftar peralatan…','Loading equipment register…')+'</p>';return;}
-  const {registry:r,fire:f}=state;
-  if(!f.items.length){el.innerHTML=`<h3>🔥 ${tr('Pemeriksaan sistem melawan kebakaran','Fire safety inspection')}</h3><p>${tr('Tiada peralatan melawan kebakaran dalam skop pemeriksaan bagi stesen ini.','There is no in-scope fire equipment at this station.')}</p>${state.registryChanged?`<p role="alert">${tr('Daftar peralatan telah berubah. Keputusan lama dikekalkan dalam draf untuk rujukan.','The equipment register changed. Previous results are retained in the draft for reference.')}</p><button type="button" class="btn" data-imf-ack>${tr('Sahkan semakan daftar baharu','Confirm review of the new register')}</button>`:''}${f.photos.length?`<p role="alert">${tr('Draf mempunyai gambar daripada daftar lama. Semak dan buang gambar yang tidak lagi berkaitan sebelum menghantar.','The draft contains photos from an older register. Review and remove unrelated photos before submitting.')}</p>${f.photos.map((p,i)=>`<figure><img src="${p.data}" alt="${esc(p.location||'Evidence')}" style="max-width:100%;max-height:180px"><figcaption>${esc(p.location)}</figcaption><button type="button" class="btn" data-imf-remove="${i}">${tr('Buang gambar','Remove photo')}</button></figure>`).join('')}`:''}<p id="imfStatus" role="status"></p><button type="button" class="btn" data-imf-refresh>${tr('Muat semula daftar peralatan','Refresh equipment register')}</button>`;return;}
-  el.innerHTML=`<h3>🔥 ${tr('Pemeriksaan sistem melawan kebakaran','Fire safety inspection')}</h3><p>${tr('Wajib: semak semua peralatan dan padankan gambar bukti. Gambar yang sama boleh meliputi beberapa peralatan jika semuanya jelas kelihatan.','Required: inspect all equipment and link photo evidence. One photo can cover several units if all are clearly visible.')}</p>${f.items.map(a=>{const asset=r.assets.find(x=>x.id===a.id);return `<fieldset style="border:1px solid #94a3b8;border-radius:10px;padding:12px;margin:14px 0"><legend>${esc(asset.code)} · ${esc(r.types?.[asset.type]||asset.type)}</legend><p>${esc(asset.location_name)} · ${tr('Siri','Serial')}: ${esc(asset.serial||'—')} · ${tr('Luput','Expiry')}: ${esc(asset.expiry_date||'—')}</p>${r.checks[a.type].map(k=>`<label style="display:block;margin:8px 0">${esc(label(k,r))}<select class="form-control" data-imf-asset="${esc(a.id)}" data-imf-check="${esc(k)}"><option value="">${tr('— Pilih keputusan —','— Select result —')}</option>${[['OK',tr('Baik','Good')],['NOT_OK',tr('Tidak baik','Not good')],['NOT_INSPECTED',tr('Tidak dapat diperiksa','Unable to inspect')]].map(([v,n])=>`<option value="${v}" ${a.checks[k]===v?'selected':''}>${n}</option>`).join('')}</select></label>`).join('')}<label>${tr('Catatan / sebab (wajib jika bukan Baik)','Remarks / reason (required unless Good)')}<textarea class="form-control" data-imf-note="${esc(a.id)}" maxlength="2000">${esc(a.remarks||'')}</textarea></label></fieldset>`;}).join('')}${!f.items.length?'<p role="alert">'+tr('Daftar peralatan stesen masih kosong. Hubungi Admin sebelum menghantar pemeriksaan.','Equipment register is empty. Contact Admin before submitting the inspection.')+'</p>':''}<label style="display:block;margin-top:14px">📷 ${tr('Gambar bukti wajib — maksimum 12','Mandatory photo evidence — maximum 12')}<input data-imf-files type="file" accept="image/jpeg,image/png,image/webp" capture="environment" multiple></label><div>${f.photos.map((p,i)=>`<fieldset style="padding:12px;margin:12px 0;border:1px solid #94a3b8"><img src="${p.data}" alt="${tr('Bukti','Evidence')} ${i+1}" style="max-width:100%;max-height:220px"><label>${tr('Lokasi gambar','Photo location')}<input class="form-control" data-imf-location="${i}" value="${esc(p.location)}" maxlength="160"></label><p>${tr('Peralatan yang kelihatan dalam gambar ini:','Equipment visible in this photo:')}</p>${f.items.map(a=>`<label style="display:block"><input type="checkbox" data-imf-photo="${i}" value="${esc(a.id)}" ${p.assetIds.includes(a.id)?'checked':''}> ${esc(r.assets.find(x=>x.id===a.id)?.code)}</label>`).join('')}<button class="btn" type="button" data-imf-remove="${i}">${tr('Buang gambar','Remove photo')}</button></fieldset>`).join('')}</div><label style="display:block">${tr('Sebab lewat, jika berkenaan','Reason for late submission, if applicable')}<input class="form-control" data-imf-late maxlength="1000" value="${esc(f.lateReason||'')}"></label><label style="display:block;margin:14px 0"><input type="checkbox" data-imf-attest ${f.attested?'checked':''}> ${tr('Saya mengesahkan keputusan dan gambar ini mewakili pemeriksaan peralatan di stesen ini.','I confirm these results and photos represent the equipment inspection at this station.')}</label><p id="imfStatus" role="status" aria-live="polite"></p><button type="button" class="btn" data-imf-refresh>${tr('Muat semula daftar peralatan','Refresh equipment register')}</button>`;
+  const el=root();
+  issueField=null;
+  if(!state){
+   el.innerHTML=`${heading()}<p>${tr('Memuatkan daftar peralatan…','Loading equipment register…')}</p>`;
+   return;
+  }
+  const {registry,fire:f}=state;
+  const notice=state.fromCache?`<p class="imf-cache-notice" role="status">${tr('Daftar tersimpan pada peranti sedang digunakan. Muat semula daftar apabila sambungan pulih.','The register saved on this device is in use. Refresh the register when the connection returns.')}</p>`:'';
+  const footer=`<p id="imfStatus" role="status" aria-live="polite"></p>
+    <button type="button" class="btn-secondary" data-imf-refresh>${tr('Muat semula daftar peralatan','Refresh equipment register')}</button>`;
+  if(!f.items.length){
+   el.innerHTML=`${heading()}${notice}
+      <p>${tr('Tiada peralatan melawan kebakaran dalam skop pemeriksaan bagi stesen ini.','There is no in-scope fire equipment at this station.')}</p>
+      ${state.registryChanged?`<p role="alert">${tr('Daftar peralatan telah berubah. Keputusan lama dikekalkan dalam draf untuk rujukan.','The equipment register changed. Previous results are retained in the draft for reference.')}</p>
+        <button type="button" class="btn-secondary" data-imf-ack>${tr('Sahkan semakan daftar baharu','Confirm review of the new register')}</button>`:''}
+      ${f.photos.length?`<p role="alert">${tr('Draf mempunyai gambar daripada daftar lama. Semak dan buang gambar yang tidak lagi berkaitan sebelum menghantar.','The draft contains photos from an older register. Review and remove unrelated photos before submitting.')}</p>
+        ${f.photos.map((p,i)=>`<figure class="imf-card"><img src="${esc(p.data)}" alt="${photoName(i)}" style="max-width:100%;max-height:180px">
+          <figcaption>${photoName(i)} · ${esc(p.location)}</figcaption>
+          <button type="button" class="btn-secondary" data-imf-remove="${i}">${tr('Buang gambar','Remove photo')}</button>
+        </figure>`).join('')}`:''}
+      ${footer}`;
+   return;
+  }
+  const assets=assetIndex(registry);
+  el.innerHTML=`${heading()}${notice}
+    <p>${tr('Semak semua peralatan dan padankan gambar bukti. Satu gambar boleh meliputi beberapa peralatan jika semuanya jelas kelihatan.','Inspect all equipment and link photo evidence. One photo can cover several units if all are clearly visible.')}</p>
+    ${f.items.map(item=>renderEquipment(item,assets.get(item.id),registry)).join('')}
+    <section data-imf-evidence aria-labelledby="imfEvidenceTitle">
+      <h4 id="imfEvidenceTitle">${tr('Gambar bukti wajib','Photo evidence required')} · ${f.photos.length}/${maxPhotos}</h4>
+      <div class="imf-photo-actions">
+        <button type="button" class="btn-secondary" data-imf-pick="camera">${tr('Kamera','Camera')}</button>
+        <button type="button" class="btn-secondary" data-imf-pick="gallery">${tr('Galeri','Gallery')}</button>
+      </div>
+      <input hidden data-imf-files="camera" type="file" accept="${photoTypes.join(',')}" capture="environment">
+      <input hidden data-imf-files="gallery" type="file" accept="${photoTypes.join(',')}" multiple>
+      ${f.photos.map((photo,index)=>renderPhoto(photo,index,assets)).join('')}
+    </section>
+    <label class="imf-field">${tr('Sebab lewat, jika berkenaan','Reason for late submission, if applicable')}
+      <input class="form-control" data-imf-late maxlength="1000" value="${esc(f.lateReason||'')}">
+    </label>
+    <label class="imf-option">
+      <input type="checkbox" data-imf-attest ${f.attested?'checked':''}> ${tr('Saya mengesahkan keputusan dan gambar ini mewakili pemeriksaan peralatan di stesen ini.','I confirm these results and photos represent the equipment inspection at this station.')}
+    </label>
+    ${footer}`;
  }
+
+ function canUseCachedRegistry(error){
+  const message=String(error?.message||'');
+  if(error?.authRequired||[401,403].includes(error?.httpStatus)||
+     /HTTP[ _](401|403)\b|INSPECTOR_(AUTH|SESSION|STATION)|(?:EDGE|IMS)_AUTH|UNAUTHORIZED|FORBIDDEN|TOKEN_EXPIRED|SESSION_EXPIRED|FIRE_REGISTRY_INVALID|FIRE_UPDATE_IMS_FIRST/i.test(message))return false;
+  return error?.isTransportError===true||error?.retryable===true;
+ }
+
  async function load(force=false){
-  let c;try{c=context();}catch{return;}if(!c.station||!c.teamCode||!c.submissionId)return;
-  if(!force&&state&&scope(state.context)===scope(c)&&validRegistry(state.registry))return;
-  if(!force&&loading?.scope===scope(c))return loading.promise;
-  if(state)await persist();const ticket=++sequence;state=null;render();
+  let c;
+  try{c=context();}catch{return;}
+  if(!c.station||!c.teamCode||!c.submissionId)return;
+  const currentScope=scope(c);
+  if(loading?.scope===currentScope)return loading.promise;
+  const sameForm=activeForm(state)&&validRegistry(state.registry);
+  if(!force&&sameForm)return;
+  const ticket=++sequence;
+  const isCurrent=()=>ticket===sequence&&scope(context())===currentScope;
   const promise=(async()=>{
-   const cached=await origGet('kv',key(c)).catch(()=>null);let r=cached?.value?.registry;
-   if(force||!validRegistry(r)||navigator.onLine){
-    try{
-     const fresh=await postToWebApp({action:'getInspectorWorkspace',fireRegistryOnly:'1',forceFireRegistry:force?'1':'0',...c},{timeoutMs:60000,retries:1});
-     if(!validRegistry(fresh))throw Error(fresh?.error||'FIRE_UPDATE_IMS_FIRST: Daftar peralatan versi 2 diperlukan.');
-     r=fresh;
-    }catch(e){if(force||navigator.onLine||!validRegistry(r))throw e;}
+   if(state)await persist();
+   if(!isCurrent())return;
+   if(sameForm){
+    status(tr('Memuatkan daftar peralatan…','Loading equipment register…'));
+   }else{
+    state=null;
+    render();
    }
-   if(!validRegistry(r))throw Error('FIRE_REGISTRY_INVALID');
-   if(ticket!==sequence||scope(c)!==scope(context()))return;
-   const old=cached?.value?.fire,assets=r.assets.filter(applicable);
-   const items=assets.map(a=>{const previous=old?.items?.find(x=>x.id===a.id&&x.type===a.type);return {id:a.id,type:a.type,checks:Object.fromEntries(r.checks[a.type].map(k=>[k,previous?.checks?.[k]||''])),remarks:previous?.remarks||''};});
-   const changed=!!old&&JSON.stringify((old.items||[]).map(a=>[a.id,a.type,Object.keys(a.checks||{}).sort()]).sort())!==JSON.stringify(items.map(a=>[a.id,a.type,Object.keys(a.checks).sort()]).sort());
-   state={context:c,registry:r,previousFire:changed?clone(old):cached?.value?.previousFire,registryChanged:changed||cached?.value?.registryChanged===true,fire:{version:1,checklistVersion:2,period:c.year+'-'+String(MONTHS.indexOf(c.month)+1).padStart(2,'0'),attested:!assets.length||(!changed&&old?.attested===true),notApplicable:!assets.length,lateReason:old?.lateReason||'',photos:Array.isArray(old?.photos)?old.photos:[],items}};
-   render();await persist();
-  })().catch(e=>{if(ticket===sequence){state=null;root().innerHTML='<h3>'+tr('Pemeriksaan sistem melawan kebakaran','Fire safety inspection')+'</h3><p role="alert">'+esc(e.message)+'</p><button type="button" class="btn" data-imf-refresh>'+tr('Cuba semula','Retry')+'</button>';}}).finally(()=>{if(loading?.promise===promise)loading=null;});
-  loading={scope:scope(c),promise};return promise;
+   const record=await origGet('kv',key(c)).catch(()=>null);
+   if(!isCurrent())return;
+   const value=record?.value,cached=value?.context&&scope(value.context)===currentScope?value:null;
+   let registry=sameForm?state?.registry:cached?.registry;
+   const cachedValid=validRegistry(registry);
+   let fromCache=true;
+   if(force||!cachedValid||navigator.onLine){
+    try{
+     const fresh=await postToWebApp({action:'getInspectorWorkspace',fireRegistryOnly:'1',forceFireRegistry:force?'1':'0',...c},{timeoutMs:cachedValid?12000:60000,retries:1});
+     if(!validRegistry(fresh)){
+      const error=Error(fresh?.error||'FIRE_UPDATE_IMS_FIRST: Daftar peralatan versi 2 diperlukan.');
+      error.retryable=fresh?.ok===false&&fresh?.retryable===true;
+      throw error;
+     }
+     registry=fresh;
+     fromCache=false;
+    }catch(error){
+     if(!isCurrent())return;
+     if(!cachedValid||!canUseCachedRegistry(error)){
+      if(sameForm&&state)await persist().catch(storageError=>status(storageError.message,true));
+      if(!isCurrent())return;
+      state=null;
+      issueField=null;
+      root().innerHTML=`${heading()}<p role="alert">${esc(error.message)}</p>
+        <button type="button" class="btn-secondary" data-imf-refresh>${tr('Cuba semula','Retry')}</button>`;
+      return;
+     }
+    }
+   }
+   if(!isCurrent())return;
+   const draft=sameForm?collect():cached,old=draft?.fire,assets=registry.assets.filter(applicable);
+   const items=assets.map(asset=>{
+    const previous=old?.items?.find(item=>item.id===asset.id&&item.type===asset.type);
+    return {
+     id:asset.id,type:asset.type,
+     checks:Object.fromEntries(registry.checks[asset.type].map(k=>[k,previous?.checks?.[k]||''])),
+     remarks:previous?.remarks||''
+    };
+   });
+   const layout=equipment=>JSON.stringify(equipment.map(a=>[a.id,a.type,Object.keys(a.checks||{}).sort()]).sort());
+   const changed=!!old&&layout(old.items||[])!==layout(items);
+   state={
+    context:c,registry,fromCache,previousFire:changed?clone(old):draft?.previousFire,
+    registryChanged:changed||draft?.registryChanged===true,
+    fire:{
+     version:1,checklistVersion:2,period:c.year+'-'+String(MONTHS.indexOf(c.month)+1).padStart(2,'0'),
+     attested:!assets.length||(!changed&&old?.attested===true),notApplicable:!assets.length,
+     lateReason:old?.lateReason||'',photos:Array.isArray(old?.photos)?old.photos:[],items
+    }
+   };
+   render();
+   await persist();
+  })().catch(error=>{
+   if(isCurrent())status(error.message,true);
+  }).finally(()=>{
+   if(loading?.promise===promise)loading=null;
+  });
+  loading={scope:currentScope,promise};
+  return promise;
  }
- function snapshot(){if(!state||scope(state.context)!==scope(context()))throw Error(tr('Daftar peralatan belum dimuatkan. Cuba semula dengan internet.','Equipment register is not loaded. Retry with internet.'));return clone(collect().fire);}
- async function validate(){await load();if(busy)throw Error(tr('Tunggu gambar selesai diproses.','Wait for photos to finish processing.'));const f=snapshot();if(!f.items.length){if(state.registryChanged)throw Error(tr('Sahkan semakan daftar baharu sebelum menghantar.','Confirm review of the updated register before submitting.'));if(f.photos.length)throw Error(tr('Semak gambar daripada daftar lama sebelum menghantar.','Review photos from the previous register before submitting.'));await persist();return f;}for(const a of f.items){for(const k of state.registry.checks[a.type])if(!['OK','NOT_OK','NOT_INSPECTED'].includes(a.checks[k]))throw Error(tr('Lengkapkan semua keputusan pemeriksaan kebakaran.','Complete every fire inspection result.'));if(Object.values(a.checks).some(v=>v!=='OK')&&!a.remarks.trim())throw Error(tr('Catatan wajib bagi peralatan tidak baik atau tidak dapat diperiksa.','Remarks are required for defective or uninspected equipment.'));}if(!f.photos.length||f.photos.length>12)throw Error(tr('Ambil gambar bukti peralatan kebakaran sebelum menghantar.','Take fire equipment evidence photos before submitting.'));if(f.photos.some(p=>!String(p.location||'').trim()||!Array.isArray(p.assetIds)||!p.assetIds.length||p.assetIds.some(id=>!f.items.some(a=>a.id===id)))||f.items.some(a=>!f.photos.some(p=>p.assetIds.includes(a.id))))throw Error(tr('Isi lokasi gambar dan padankan bukti kepada setiap peralatan.','Enter photo locations and link evidence to every equipment unit.'));if(!f.attested)throw Error(tr('Tandakan pengesahan pemeriksaan kebakaran.','Confirm the fire inspection attestation.'));state.registryChanged=false;await persist();return f;}
- document.addEventListener('input',e=>{if(e.target.closest('#imsMainFire')&&!e.target.matches('[data-imf-files]')){clearTimeout(persistTimer);persistTimer=setTimeout(()=>persist().catch(err=>status(err.message,true)),300);}});
- document.addEventListener('change',async e=>{if(!e.target.matches('[data-imf-files]'))return;if(!state)return;busy++;const current=state;try{collect();if(current.fire.photos.length+e.target.files.length>12)throw Error(tr('Maksimum 12 gambar kebakaran.','Maximum 12 fire evidence photos.'));for(const file of e.target.files){if(!/^image\/(jpeg|png|webp)$/.test(file.type)||file.size>20000000)throw Error(tr('Pilih gambar JPEG, PNG atau WebP di bawah 20MB.','Choose a JPEG, PNG or WebP image below 20MB.'));const source=await readFileAsDataUrl(file),image=await dklpoCompressImage_(source,180000,1400);if(current!==state||scope(current.context)!==scope(context()))return;current.fire.photos.push({data:image.dataUrl,location:'',assetIds:[]});}collect();render();await persist();}catch(err){if(current===state){collect();render();await persist().catch(()=>{});}status(err.message,true);}finally{busy--;e.target.value='';}});
- document.addEventListener('click',async e=>{if(e.target.matches('[data-imf-ack]')){collect();state.registryChanged=false;render();await persist();return;}if(e.target.closest('[data-imf-refresh]')){if(busy)return;if(state)await persist();await load(true);}if(e.target.matches('[data-imf-remove]')){collect();state.fire.photos.splice(Number(e.target.dataset.imfRemove),1);render();await persist();}});
- const originalLoad=loadStation;loadStation=async function(...args){const result=await originalLoad.apply(this,args);if(result!==false)await load();return result;};
- const originalRestore=restoreDraft;restoreDraft=async function(...args){const result=await originalRestore.apply(this,args);await load();return result;};
- const originalSubmit=submitInspection;submitInspection=async function(...args){if(submitPending||isSubmitting||hasSubmittedCurrent)return;submitPending=true;try{await validate();}catch(e){showToast(e.message,'error');root().scrollIntoView?.({behavior:'smooth'});submitPending=false;return;}try{return await originalSubmit.apply(this,args);}finally{submitPending=false;}};
+
+ function snapshot(){
+  if(!activeForm(state))throw Error(tr('Daftar peralatan belum dimuatkan. Cuba semula dengan internet.','Equipment register is not loaded. Retry with internet.'));
+  return clone(collect().fire);
+ }
+ const fieldError=(message,field)=>Object.assign(Error(message),{field});
+ function clearIssue(){
+  root().querySelector('#imfValidationError')?.remove();
+  issueField?.removeAttribute('aria-invalid');
+  issueField?.removeAttribute('aria-describedby');
+  issueField=null;
+ }
+ function showIssue(error){
+  clearIssue();
+  const el=root(),message=document.createElement('p');
+  message.id='imfValidationError';
+  message.className='imf-validation-error';
+  message.setAttribute('role','alert');
+  message.tabIndex=-1;
+  message.textContent=error.message;
+  const field=error.field;
+  if(field&&el.contains(field)){
+   (field.closest('label')||field).before(message);
+   field.setAttribute('aria-invalid','true');
+   field.setAttribute('aria-describedby',message.id);
+   issueField=field;
+  }else{
+   el.prepend(message);
+  }
+  message.focus({preventScroll:true});
+  const reduceMotion=typeof matchMedia==='function'&&matchMedia('(prefers-reduced-motion: reduce)').matches;
+  message.scrollIntoView({behavior:reduceMotion?'auto':'smooth',block:'start'});
+ }
+
+ async function validate(){
+  await load();
+  const el=root(),evidence=el.querySelector('[data-imf-evidence]');
+  if(busy)throw fieldError(tr('Tunggu gambar selesai diproses.','Wait for photos to finish processing.'),evidence);
+  const f=snapshot();
+  if(!f.items.length){
+   if(state.registryChanged)throw fieldError(tr('Sahkan semakan daftar baharu sebelum menghantar.','Confirm review of the updated register before submitting.'),el.querySelector('[data-imf-ack]'));
+   if(f.photos.length)throw fieldError(tr('Semak gambar daripada daftar lama sebelum menghantar.','Review photos from the previous register before submitting.'),el.querySelector('[data-imf-remove]'));
+   await persist();
+   return f;
+  }
+  const assets=assetIndex(state.registry);
+  const checks=[...el.querySelectorAll('[data-imf-check]')],notes=[...el.querySelectorAll('[data-imf-note]')];
+  for(const item of f.items){
+   const code=assets.get(item.id).code||item.id;
+   const missing=state.registry.checks[item.type].find(k=>!['OK','NOT_OK','NOT_INSPECTED'].includes(item.checks[k]));
+   if(missing){
+    const field=checks.find(control=>control.dataset.imfAsset===item.id&&control.dataset.imfCheck===missing);
+    throw fieldError(tr(`Lengkapkan keputusan bagi ${code}.`,`Complete the result for ${code}.`),field);
+   }
+   if(Object.values(item.checks).some(value=>value!=='OK')&&!String(item.remarks||'').trim()){
+    throw fieldError(tr(`Isi catatan bagi ${code}.`,`Enter remarks for ${code}.`),notes.find(note=>note.dataset.imfNote===item.id));
+   }
+  }
+  if(!f.photos.length)throw fieldError(tr('Tambah gambar bukti peralatan kebakaran.','Add fire equipment evidence photos.'),evidence);
+  if(f.photos.length>maxPhotos)throw fieldError(tr('Maksimum 12 gambar kebakaran.','Maximum 12 fire evidence photos.'),evidence);
+  const covered=new Set();
+  for(const [i,photo] of f.photos.entries()){
+   const name=photoName(i),links=photoLinks(photo);
+   const linkGroup=el.querySelector(`[data-imf-links="${i}"]`);
+   if(!String(photo.location||'').trim()){
+    throw fieldError(tr(`${name} — isi lokasi gambar.`,`${name} — enter the photo location.`),el.querySelector(`[data-imf-location="${i}"]`));
+   }
+   if(links.some(id=>!assets.has(id))){
+    throw fieldError(tr(`${name} — buang padanan lama dan padankan peralatan semasa.`,`${name} — remove obsolete links and link current equipment.`),linkGroup);
+   }
+   if(!links.length){
+    throw fieldError(tr(`${name} — tandakan peralatan yang kelihatan dalam gambar ini.`,`${name} — select the equipment visible in this photo.`),linkGroup);
+   }
+   for(const id of links)covered.add(id);
+  }
+  const missingCodes=[...assets.values()].filter(asset=>!covered.has(asset.id)).map(asset=>asset.code||asset.id);
+  if(missingCodes.length){
+   const codes=missingCodes.join(', ');
+   throw fieldError(tr(`Peralatan belum ada gambar bukti — ${codes}.`,`Equipment missing photo evidence — ${codes}.`),evidence);
+  }
+  if(!f.attested)throw fieldError(tr('Tandakan pengesahan pemeriksaan kebakaran.','Confirm the fire inspection attestation.'),el.querySelector('[data-imf-attest]'));
+  state.registryChanged=false;
+  await persist();
+  return f;
+ }
+
+ function editedField(input){
+  if(!activeForm(state)||!input.closest('#imsMainFire')||input.matches('[data-imf-files]'))return false;
+  if(issueField?.contains(input))clearIssue();
+  return true;
+ }
+ const saveForm=()=>persist().catch(error=>status(error.message,true));
+ document.addEventListener('input',e=>{
+  if(!editedField(e.target))return;
+  clearTimeout(persistTimer);
+  persistTimer=setTimeout(saveForm,300);
+ });
+ document.addEventListener('change',async e=>{
+  if(e.target.matches('[data-imf-files]'))await addPhotos(e.target);
+  else if(editedField(e.target))await saveForm();
+ });
+ document.addEventListener('visibilitychange',()=>{
+  if(document.hidden&&persistTimer!==null&&activeForm(state))void saveForm();
+ });
+
+ async function addPhotos(input){
+  const files=Array.from(input.files||[]);
+  input.value='';
+  if(!activeForm(state)||busy||!files.length)return;
+  const current=state,added=[];
+  let failure=null;
+  busy++;
+  try{
+   if(current.fire.photos.length+files.length>maxPhotos)throw Error(tr('Maksimum 12 gambar kebakaran.','Maximum 12 fire evidence photos.'));
+   for(const file of files){
+    if(!photoTypes.includes(file.type)||file.size>20000000)throw Error(tr('Pilih gambar JPEG, PNG atau WebP di bawah 20MB.','Choose a JPEG, PNG or WebP image below 20MB.'));
+    const source=await readFileAsDataUrl(file);
+    const image=await dklpoCompressImage_(source.replace(/^data:image\/jpg;/,'data:image/jpeg;'),180000,1400);
+    if(!activeForm(current))return;
+    added.push({data:image.dataUrl,location:current.context.station.trim().slice(0,160),assetIds:[]});
+   }
+  }catch(error){
+   failure=error;
+  }finally{
+   busy--;
+  }
+  if(!activeForm(current))return;
+  if(added.length){
+   collect();
+   current.fire.photos.push(...added);
+   render();
+   await saveForm();
+  }
+  if(failure&&activeForm(current))showIssue(fieldError(failure.message,root().querySelector('[data-imf-evidence]')));
+ }
+
+ document.addEventListener('click',async e=>{
+  if(e.target.closest('[data-imf-refresh]')){
+   if(!busy)await load(true);
+   return;
+  }
+  if(!activeForm(state))return;
+  const pick=e.target.closest('[data-imf-pick]');
+  if(pick?.dataset?.imfPick){
+   const evidence=root().querySelector('[data-imf-evidence]');
+   if(busy)showIssue(fieldError(tr('Tunggu gambar selesai diproses.','Wait for photos to finish processing.'),evidence));
+   else if(state.fire.photos.length>=maxPhotos)showIssue(fieldError(tr('Maksimum 12 gambar kebakaran.','Maximum 12 fire evidence photos.'),evidence));
+   else root().querySelector(`[data-imf-files="${pick.dataset.imfPick}"]`)?.click();
+   return;
+  }
+  if(e.target.matches('[data-imf-ack]')){
+   collect();
+   state.registryChanged=false;
+  }else if(e.target.matches('[data-imf-remove]')){
+   collect();
+   state.fire.photos.splice(Number(e.target.dataset.imfRemove),1);
+  }else if(e.target.matches('[data-imf-clear-links]')){
+   const photo=collect().fire.photos[Number(e.target.dataset.imfClearLinks)];
+   const assets=assetIndex(state.registry);
+   photo.assetIds=photoLinks(photo).filter(id=>assets.has(id));
+  }else return;
+  render();
+  await saveForm();
+ });
+
+ const originalLoad=loadStation;
+ loadStation=async function(...args){
+  const result=await originalLoad.apply(this,args);
+  if(result!==false&&!restoringDraft)await load();
+  return result;
+ };
+ const originalRestore=restoreDraft;
+ restoreDraft=async function(...args){
+  restoringDraft++;
+  let result;
+  try{result=await originalRestore.apply(this,args);}
+  finally{restoringDraft--;}
+  await load();
+  return result;
+ };
+ const originalSubmit=submitInspection;
+ submitInspection=async function(...args){
+  if(submitPending||isSubmitting||hasSubmittedCurrent)return;
+  submitPending=true;
+  try{
+   try{await validate();}
+   catch(error){showIssue(error);return;}
+   clearIssue();
+   return await originalSubmit.apply(this,args);
+  }finally{submitPending=false;}
+ };
  if(typeof buildInspectionPayload_==='function'){const old=buildInspectionPayload_;buildInspectionPayload_=function(...args){return {...old.apply(this,args),fire:JSON.stringify(snapshot())};};}
  if(typeof browserQueueSave_==='function'){const old=browserQueueSave_;browserQueueSave_=async function(record){if(record.type==='INSPECTION'&&!record.payload.fire){if(record.id!==context().submissionId)throw Error('FIRE_DRAFT_SCOPE_MISMATCH');record.payload.fire=JSON.stringify(snapshot());}return old.call(this,record);};}
  const originalIdbPut=idbPut_;idbPut_=async function(store,value,...rest){if(store==='drafts'&&state&&scope(state.context)===scope(context())){await persist();value={...value,fireEvidence:clone(collect())};}if(store==='offlineQueue'&&value?.payload?.action==='submitInspection'&&!value.payload.fire){if(value.payload.clientSubmissionId!==context().submissionId)throw Error('FIRE_DRAFT_SCOPE_MISMATCH');value={...value,payload:{...value.payload,fire:JSON.stringify(snapshot())}};}return originalIdbPut.call(this,store,value,...rest);};
@@ -4005,7 +4391,12 @@ const IMSMainFire=(()=>{
  if(typeof browserQueueRetry_==='function'){const old=browserQueueRetry_;browserQueueRetry_=async function(id){await repairQueuedFire(id);return old.apply(this,arguments);};}
 
  async function importQueuedFire(value){
-  const c=context();await writes.catch(()=>{});const cached=await origGet('kv',key(c)).catch(()=>null),registry=cached?.value?.registry||state?.registry;clearTimeout(persistTimer);sequence++;state=null;
+  const c=context();
+  await writes.catch(()=>{});
+  const record=await origGet('kv',key(c)).catch(()=>null);
+  const cached=record?.value;
+  const registry=cached?.context&&scope(cached.context)===scope(c)?cached.registry:activeForm(state)?state.registry:undefined;
+  clearTimeout(persistTimer);persistTimer=null;sequence++;loading=null;state=null;
   await origPut('kv',{key:key(c),value:{context:c,fire:clone(value),registry:registry,registryChanged:true}});
   await load(navigator.onLine);return {ready:!!state};
  }
