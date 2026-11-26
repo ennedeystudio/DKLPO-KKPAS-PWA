@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="ms"><head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0b1220">
 <title>KKPAS Monthly Inspection - Desa Kim Loong Palm Oil Sdn Bhd</title>
 <link rel="manifest" href="./manifest.json">
@@ -878,6 +878,23 @@ select:is([id*="month" i], [id*="year" i]):focus-visible,
 }
 
 </style>
+<style>
+.field-shell-only .main-content > :not(#fieldTools){display:none!important}
+#fieldTools,#fieldHistory,#fieldPrepare{color:var(--text-primary,inherit)}
+#fieldTools{margin:0 0 12px;display:grid;gap:8px}
+.field-actions,#fieldDrafts{display:flex;flex-wrap:wrap;gap:8px}
+#fieldDrafts{display:grid;margin:12px 0}
+.field-actions .btn-secondary,#fieldDrafts button,#fieldRows button,#imsMainFire .btn-secondary{min-height:44px;width:auto;max-width:100%}
+#fieldStatus:empty,#fieldReady:empty{display:none}
+#fieldHistory,#fieldPrepare{background:var(--surface,#1c2635);color:var(--text,#f2f5ff);border:1px solid #78908d;border-radius:14px;width:min(92vw,520px);max-height:78dvh;padding:16px;overflow:auto}
+#fieldHistory::backdrop,#fieldPrepare::backdrop{background:#101c25aa}
+#fieldRows article,#fieldPrepareRows article{padding:12px 0;border-bottom:1px solid #74878b}
+#fieldRows p{overflow-wrap:anywhere}
+#fieldProgress{min-height:44px}
+#fieldStations{margin-top:4px}
+#fieldDrafts .field-actions{align-items:center}
+#fieldTools [hidden],#imsMainFire [hidden]{display:none!important}
+</style>
 </head>
 <body>
 <button id="notificationBell" class="notification-bell" type="button" onclick="openNotificationCentre()" aria-label="Notification Centre">🔔<span id="notificationBadge" class="notification-badge">0</span></button>
@@ -912,14 +929,15 @@ select:is([id*="month" i], [id*="year" i]):focus-visible,
 </div>
 
 
+<dialog id="fieldHistory" aria-labelledby="fieldHistoryTitle"><h2 id="fieldHistoryTitle" data-ms="Hantaran saya" data-en="My submissions">Hantaran saya</h2>
+<div class="field-actions"><button type="button" id="fieldClose" class="btn-secondary" data-ms="Tutup" data-en="Close">Tutup</button>
+<button type="button" id="fieldRefresh" class="btn-secondary" data-ms="Semak semula" data-en="Refresh">Semak semula</button></div><div id="fieldRows" aria-live="polite"></div></dialog>
+<dialog id="fieldPrepare" aria-labelledby="fieldPrepTitle"><h2 id="fieldPrepTitle" data-ms="Stesen luar talian" data-en="Offline stations">Stesen luar talian</h2><button type="button" class="btn-secondary" onclick="this.closest('dialog').close()" data-ms="Tutup" data-en="Close">Tutup</button><div id="fieldPrepareRows" aria-live="polite"></div></dialog>
 <div class="draft-modal" id="draftModal">
 <div class="draft-box">
 <h3 data-ms="Pulihkan Draf?" data-en="Restore Draft?">Pulihkan Draf?</h3>
 <p data-ms="Ada pemeriksaan yang belum selesai. Pulihkan data?" data-en="There is unfinished inspection. Restore data?">Ada pemeriksaan yang belum selesai. Pulihkan data?</p>
-<div class="draft-buttons">
-<button class="btn-secondary" onclick="discardDraft()" data-ms="Buang" data-en="Discard">Buang</button>
-<button class="btn-submit" onclick="restoreDraft()" data-ms="Pulihkan" data-en="Restore">Pulihkan</button>
-</div>
+<div id="fieldDrafts"></div><div class="draft-buttons"><button type="button" id="fieldOther" class="btn-secondary" data-ms="Pilih stesen lain" data-en="Choose a station">Pilih stesen lain</button><button type="button" class="btn-secondary" onclick="DklpoField.history()" data-ms="Hantaran saya" data-en="My submissions">Hantaran saya</button></div>
 </div>
 </div>
 
@@ -1029,6 +1047,14 @@ select:is([id*="month" i], [id*="year" i]):focus-visible,
 
 <div class="main-content">
 
+<section id="fieldTools">
+<div class="field-actions"><button type="button" id="fieldOpenHistory" class="btn-secondary" data-ms="Hantaran saya" data-en="My submissions">Hantaran saya</button>
+<button type="button" id="fieldOffline" class="btn-secondary" data-ms="Stesen luar talian" data-en="Offline stations">Stesen luar talian</button>
+<button type="button" id="fieldProgress" class="btn-secondary" hidden></button></div>
+<span id="fieldReady" role="status"></span><span id="fieldStatus" role="status"></span>
+<div id="fieldStations" class="field-actions" hidden></div>
+<button type="button" class="btn-secondary" id="fieldRetry" hidden data-ms="Cuba semula" data-en="Retry">Cuba semula</button>
+</section>
 <div class="submit-warning" id="submitWarning">
 ⚠️ <span data-ms="PERINGATAN: Anda hanya boleh menghantar laporan ini SEKALI sahaja. Pastikan semua maklumat lengkap sebelum menghantar." data-en="WARNING: You can only submit this report ONCE. Ensure all information is complete before submitting.">PERINGATAN: Anda hanya boleh menghantar laporan ini SEKALI sahaja. Pastikan semua maklumat lengkap sebelum menghantar.</span>
 </div>
@@ -2166,7 +2192,7 @@ async function restoreDraft() {
   renderPhotoList();
   showToast(t('Draf lengkap dipulihkan termasuk gambar.', 'Full draft restored including photos.'), 'success');
   document.getElementById('draftModal').classList.remove('active');
-  startAutoSave();
+  startAutoSave();return true;
 }
 
 async function discardDraft() {
@@ -2463,7 +2489,7 @@ async function loadStation(station,version='') {
   const stationKey = `${session.year || new Date().getFullYear()}-${session.month}-${currentTeam.code}-${station}`;
   if (submittedStations.has(stationKey)) {
     showToast(t('Stesen ini telah diperiksa', 'This station has been inspected'), 'error');
-    return;
+    return false;
   }
 
 currentStation = station;
@@ -2471,7 +2497,7 @@ currentStation = station;
   photos = [];
   checklistData = {};
   findingsDraft = {};               
-  aiInsightText = '';
+  if(typeof aiInsightText!=='undefined')aiInsightText = '';
   currentSubmissionId = newSubmissionId_();
   hasSubmittedCurrent = false;
 
@@ -2494,14 +2520,15 @@ const container = document.getElementById('checklistContainer');
   container.innerHTML = checklistToUse.map((sec, idx) => `
     <div class="card-mobile checklist-item ${isCanteen ? 'canteen-category' : ''}" id="checkSec${idx}">
       <div class="checklist-header ${isCanteen ? 'canteen-category-header' : ''}" onclick="toggleChecklist(${idx})">
-        <h4>${sec.sec}</h4>
+        <h4>${escapeHtml(sec.sec)}</h4>
         <span class="chevron">▼</span>
       </div>
       <div class="checklist-body">
         ${sec.items.map((item, i) => `
           <div class="check-option">
-            <label>${item}</label>
-            <select class="status-select" data-item-key="${escapeHtml(sec.sec + '-' + item)}" onchange="updateChecklistByKey_(this.dataset.itemKey, this.value)">
+            <label for="field-check-${idx}-${i}">${escapeHtml(item)}</label>
+            <select id="field-check-${idx}-${i}" class="status-select" data-item-key="${escapeHtml(sec.sec + '-' + item)}" onchange="updateChecklistByKey_(this.dataset.itemKey, this.value)">
+              <option value="" disabled selected>${t('Belum disemak', 'Not reviewed')}</option>
               <option value="Memuaskan">✓ ${t('Memuaskan', 'Satisfactory')}</option>
               <option value="Tidak Memuaskan">✗ ${t('Tidak', 'No')}</option>
               <option value="Tidak Berkenaan">○ ${t('N/A', 'N/A')}</option>
@@ -2512,11 +2539,11 @@ const container = document.getElementById('checklistContainer');
     </div>
   `).join('');
 
-toggleChecklist(0);
+if(checklistToUse.length)toggleChecklist(0);
 
 document.querySelectorAll('.rating-option').forEach(el => el.classList.remove('active'));
   document.getElementById('inspectComment').value = '';
-  updateAiInsightUi_();
+  if(typeof updateAiInsightUi_==='function')updateAiInsightUi_();
   renderPhotoList();
 
 renderIssueSection();             
@@ -3434,7 +3461,7 @@ function renderNotificationCentre_(data){
 
 async function appendOfflineQueueStatusToNotificationCentre_(){
   const body=document.getElementById('notificationCentreBody'); if(!body)return;
-  let rows=[]; try{rows=await idbGetAll_('offlineQueue');}catch(_){return;}
+  let rows=[]; try{rows=(await idbGetAll_('offlineQueue')).filter(DklpoField.queueVisible);}catch(_){return;}
   if(!rows.length)return;
   const queued=rows.filter(r=>r.status!=='DEAD_LETTER');
   const dead=rows.filter(r=>r.status==='DEAD_LETTER');
@@ -3458,17 +3485,31 @@ async function appendOfflineQueueStatusToNotificationCentre_(){
 }
 
 async function retryOfflineQueueItem_(id){
-  try{
-    const row=await idbGet_('offlineQueue',id); if(!row||row.status==='EDITING')return;
-    if((row.status==='DIRECT_SENDING'&&Number(row.leaseUntil||0)>Date.now())
-      ||(row.status==='SYNCING'&&Date.now()-new Date(row.lastAttemptAt||0).getTime()<120000))return;
-    if(['DEAD_LETTER','EDITING'].includes(row.status))row.attempts=0;
-    row.status='QUEUED'; row.nextAttemptAt=''; row.deadLetterAt=''; row.leaseUntil=0;
-    await idbPut_('offlineQueue',row);
-    showSyncBanner_(t('Cubaan penghantaran dimulakan.','Submission retry started.'),4000);
+  try {
+    // Read and update within one transaction so a worker acknowledgement cannot be undone by a stale retry.
+    const changed = await dklpoRecoveryChange_(id, row => {
+      if (!row || row.status === 'EDITING') return null;
+      if (row.type !== 'ADHOC_V13') {
+        const p = row.payload;
+        if (!p || !session?.team?.code || p.teamCode !== session.team.code ||
+            p.month !== session.month || Number(p.year) !== Number(session.year)) return null;
+      }
+      const now = Date.now();
+      const activeLease = (row.owner || row.status === 'DIRECT_SENDING') && Number(row.leaseUntil || 0) > now;
+      const recentSync = row.status === 'SYNCING' && now - new Date(row.lastAttemptAt || 0).getTime() < 120000;
+      if (activeLease || recentSync) return null;
+      return {
+        ...row, attempts: row.status === 'DEAD_LETTER' ? 0 : row.attempts, status: 'QUEUED',
+        nextAttemptAt: '', deadLetterAt: '', owner: '', leaseUntil: 0
+      };
+    });
+    if (!changed) return;
+    showSyncBanner_(t('Cubaan penghantaran dimulakan.', 'Submission retry started.'), 4000);
     await registerOfflineSync_();
     await refreshNotificationCentre_(false);
-  }catch(e){showToast(t('Gagal menetapkan retry.','Failed to schedule retry.'),'error');}
+  } catch (error) {
+    showToast(t('Gagal menjadualkan penghantaran semula.', 'Could not schedule the retry.'), 'error');
+  }
 }
 
 async function maybeShowLocalReminder_(data){
@@ -3934,10 +3975,547 @@ requireGps_=async function(context){
 const dklpoScheduleGeoOriginal_=dklpoScheduleGeo_;
 dklpoScheduleGeo_=function(){if(isSubmitting)return;return dklpoScheduleGeoOriginal_.apply(this,arguments);};
 
+// Legacy records contain data URLs. New records keep photo bytes in the same IndexedDB transaction as the references.
+const DklpoDraftStore = (() => {
+  const taskPrefix = 'DKLPO_TASK:';
+  const firePrefix = 'IMS_MAIN_FIRE_V1:';
+  const receiptPrefix = 'DKLPO_ACK:';
+  const contentKeys = new Map();
+  const read = idbGet_, write = idbPut_, remove = idbDelete_;
+  const legacy = typeof KKPAS_DRAFT_KEY === 'string' ? KKPAS_DRAFT_KEY : DKLPO_BROWSER_DRAFT_KEY;
+  let selected = '', writeChain=Promise.resolve();
+  const sameOwner = (a,b) => !!a?.team?.code && a.team.code === b?.team?.code &&
+    a.month === b.month && Number(a.year) === Number(b.year);
+  const taskKey = d => taskPrefix + JSON.stringify([d.session.team.code,d.session.year,d.session.month,d.station,d.submissionId]);
+  const photoPrefix = id => 'DKLPO_PHOTO:' + encodeURIComponent(id) + ':';
+  function imageKey(data) {
+    if (contentKeys.has(data)) return contentKeys.get(data);
+    const work = (async () => {
+      const digest = await crypto.subtle.digest('SHA-256',new TextEncoder().encode(data));
+      return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2,'0')).join('');
+    })();
+    if (contentKeys.size >= 48) contentKeys.delete(contentKeys.keys().next().value);
+    contentKeys.set(data,work);
+    work.catch(() => contentKeys.delete(data));
+    return work;
+  }
+  function imageBlob(url) {
+    const comma = url.indexOf(',');
+    const type = url.slice(5,comma).split(';')[0];
+    const bytes = Uint8Array.from(atob(url.slice(comma+1)),c=>c.charCodeAt(0));
+    return new Blob([bytes],{type});
+  }
+  async function asUrl(blob) {
+    return new Promise((resolve,reject)=>{
+      const f = new FileReader();
+      f.onload = () => resolve(f.result);
+      f.onerror = () => reject(f.error);
+      f.readAsDataURL(blob);
+    });
+  }
+  async function mapPhotos(value, convert) {
+    if (!value || typeof value !== 'object') return value;
+    const result = {...value};
+    if (Array.isArray(value.photos)) result.photos = await Promise.all(value.photos.map(convert));
+    for (const field of ['fire','previousFire','fireEvidence']) {
+      if (value[field]) result[field] = await mapPhotos(value[field],convert);
+    }
+    return result;
+  }
+  function txDone(tx, result) {
+    return new Promise((resolve,reject)=>{
+      tx.oncomplete = () => resolve(result);
+      tx.onerror = tx.onabort = () => reject(tx.error || Error('Transaksi storan gagal.'));
+    });
+  }
+  async function storeRecord(store,record) {
+    const draft = store === 'drafts';
+    const value = draft ? record : record.value;
+    const id = value.submissionId || value.context?.submissionId;
+    if (!id) return write(store,record);
+    const additions = new Map();
+    const small = await mapPhotos(value,async photo=>{
+      if (!photo || !/^data:image\/[\w.+-]+;base64,/i.test(photo.data || '')) return photo;
+      const ref = photoPrefix(id) + await imageKey(photo.data);
+      additions.set(ref,photo.data);
+      const {data,...meta} = photo;
+      return {...meta,photoRef:ref};
+    });
+    const db = await openKkpasDb_();
+    const tx = db.transaction(draft ? ['kv','drafts'] : ['kv'],'readwrite');
+    const done = txDone(tx,true), kv = tx.objectStore('kv');
+    const ctx=draft?small.session?.team?.code:small.context?.teamCode;
+    const acknowledged=kv.getKey(receiptPrefix+encodeURIComponent(ctx||'')+':'+id);
+    acknowledged.onsuccess=()=>{
+    if(acknowledged.result!==undefined)return;
+    for (const [key,data] of additions) {
+      const lookup = kv.getKey(key);
+      lookup.onsuccess = () => {
+        if (lookup.result !== undefined) return;
+        try { kv.put({key,value:imageBlob(data)}); }
+        catch (_) { tx.abort(); }
+      };
+    }
+    if (draft) {
+      const drafts = tx.objectStore('drafts');
+      const key = taskKey(small);
+      drafts.put({...small,id:key});
+      const prior = drafts.get(legacy);
+      prior.onsuccess = () => {
+        const p = prior.result;
+        if (p && p.station===small.station && sameOwner(p.session,small.session) &&
+            (p.submissionId===id || (!p.submissionId && selected==='legacy'))) drafts.delete(legacy);
+      };
+      if (small.fireEvidence?.context?.submissionId === id) {
+        const ctx=small.fireEvidence.context;
+        kv.put({key:firePrefix+[ctx.teamCode,ctx.year,ctx.month,ctx.station,ctx.submissionId].join('|'),value:small.fireEvidence});
+      }
+    } else kv.put({...record,value:small});
+    };
+    return done;
+  }
+  async function unpack(value) {
+    const urls=new Map(),id=value?.submissionId||value?.context?.submissionId;
+    return mapPhotos(value,async photo=>{
+      if (!photo?.photoRef || photo.data) return photo;
+      if(!id||!photo.photoRef.startsWith(photoPrefix(id)))throw Error('Rujukan gambar draf tidak sepadan.');
+      if (!urls.has(photo.photoRef)) urls.set(photo.photoRef,(async()=>{
+        const r = await read('kv',photo.photoRef);
+        if (!(r?.value instanceof Blob)) throw Error('Gambar draf tidak dapat dibaca. Salinan asal dikekalkan.');
+        const data=await asUrl(r.value);
+        // A reload hashes the restored data once on the next save.
+        return data;
+      })());
+      const {photoRef,...meta}=photo;
+      return {...meta,data:await urls.get(photoRef)};
+    });
+  }
+  async function tasks(s=session) {
+    if (!s?.team?.code) return [];
+    const db=await openKkpasDb_();
+    const rows=await dklpoDbRequest_(db,'drafts','readonly','getAll');
+    return (rows||[]).filter(d=>(d.id===legacy||String(d.id).startsWith(taskPrefix)) &&
+      sameOwner(d.session,s)).sort((a,b)=>Number(b.timestamp)-Number(a.timestamp));
+  }
+  async function active() {
+    const rows=await tasks();
+    if (selected) return rows.find(d=>(d.submissionId||'legacy')===selected);
+    if (currentStation && currentSubmissionId) return rows.find(d=>d.submissionId===currentSubmissionId);
+    return rows[0];
+  }
+  async function drop(id, station, owner=session, discard=false) {
+    await writeChain.catch(()=>{});
+    const db=await openKkpasDb_();
+    const tx=db.transaction(discard?['drafts','kv','offlineQueue']:['drafts'],'readwrite');
+    const done=txDone(tx), store=tx.objectStore('drafts');
+    let removed=false;
+    const removeMatching=()=>{
+      const req=store.openCursor();
+      req.onsuccess=()=>{
+        const cursor=req.result;
+        if (!cursor) return;
+        const d=cursor.value;
+        if ((d.id===legacy||String(d.id).startsWith(taskPrefix)) && (d.submissionId||'legacy')===id &&
+            sameOwner(d.session,owner) && d.station===station) {
+          cursor.delete();
+          removed=true;
+          if (discard && d.submissionId) {
+            const kv=tx.objectStore('kv');
+            const prefix=photoPrefix(d.submissionId);
+            kv.delete(IDBKeyRange.bound(prefix,prefix+'\uffff'));
+            kv.delete(firePrefix+[owner.team.code,owner.year,owner.month,station,d.submissionId].join('|'));
+          }
+        }
+        cursor.continue();
+      };
+    };
+    if(discard && id!=='legacy'){
+      const queued=tx.objectStore('offlineQueue').getKey(id);
+      queued.onsuccess=()=>{if(queued.result===undefined)removeMatching();};
+    }else removeMatching();
+    await done;
+    return removed;
+  }
+  idbGet_=async function(store,key) {
+    if (store==='drafts' && key===legacy) {
+      const row=await active();
+      return row ? {...await unpack(row),id:legacy} : undefined;
+    }
+    const record=await read.apply(this,arguments);
+    if (record && store==='kv' && String(key).startsWith(firePrefix)) return {...record,value:await unpack(record.value)};
+    return record;
+  };
+  idbPut_=function(store,record) {
+    if ((store==='drafts' && record?.id===legacy && record.session?.team?.code) ||
+        (store==='kv' && String(record?.key).startsWith(firePrefix))) {
+      const next=writeChain.catch(()=>{}).then(()=>storeRecord(store,record));
+      writeChain=next;
+      return next;
+    }
+    return write.apply(this,arguments);
+  };
+  idbDelete_=async function(store,key) {
+    if (store!=='drafts' || key!==legacy) return remove.apply(this,arguments);
+    const row=await active();
+    if (row) await drop(row.submissionId||'legacy',row.station);
+    return true;
+  };
+  async function receiptRows(team) {
+    const db=await openKkpasDb_(),tx=db.transaction('kv','readonly');
+    const prefix=receiptPrefix+encodeURIComponent(team)+':';
+    const req=tx.objectStore('kv').getAll(IDBKeyRange.bound(prefix,prefix+'\uffff'));
+    await txDone(tx);
+    return req.result.map(r=>r.value);
+  }
+  return {tasks,drop,receiptRows,sameOwner,select(id){selected=id||'';},legacy};
+})();
+
+// The same station picker, checklist progress and receipt view run on both inspector portals.
+const DklpoField = (() => {
+  const el=id=>document?.getElementById(id);
+  const store=DklpoDraftStore;
+  let preloaded=null, moving=false, receiptView=0;
+  const prefix=(s,station,lang=inspectionLang)=>'dklpo_inspector_workspace_v1_'+dklpoWorkspaceKey_(s.team.code,s.month,s.year)+'|'+station+'|'+lang+'|';
+  const readCache=(s,station,v='')=>{try{return JSON.parse(localStorage.getItem(prefix(s,station)+v));}catch{return null;}};
+  const stationKey=(s,station)=>[s.year,s.month,s.team.code,station].join('-');
+  const belongs=(p,s)=>!!p && !!s?.team?.code && p.teamCode===s.team.code &&
+    p.month===s.month && Number(p.year)===Number(s.year);
+  const queueVisible=row=>row?.type==='ADHOC_V13'||belongs(row?.payload,session);
+  const notice=msg=>{el('fieldStatus').textContent=msg;};
+  const time=v=>{const d=new Date(v);return Number.isFinite(d.getTime())?d.toLocaleString(inspectionLang==='en'?'en-MY':'ms-MY',{timeZone:'Asia/Kuala_Lumpur'}):'';};
+  const button=(label,action)=>{
+    const b=document.createElement('button');b.type='button';b.className='btn-secondary';b.textContent=label;
+    b.onclick=()=>Promise.resolve(action()).catch(e=>showToast(String(e.message||e),'error'));return b;
+  };
+  function cache(s,station,version,r){
+    try{
+      const key=prefix(s,station);
+      localStorage.setItem(key+version,JSON.stringify(r));
+      if(r.station && r.checklistVersion)localStorage.setItem(key+r.checklistVersion,JSON.stringify(r));
+    }catch(_){}
+  }
+  async function workspace(station='',version='',first=false){
+    const owner=session,lang=inspectionLang;
+    if(!owner?.team?.code || owner.expiry && owner.expiry<=Date.now())throw Error(t('Log masuk semula.','Sign in again.'));
+    const req={action:'getInspectorWorkspace',teamCode:owner.team.code,month:owner.month,year:owner.year,station,
+      inspectionLang:lang,checklistVersion:version,inspectorAuth:owner.inspectorAuth||'',startFirst:first?'1':'0'};
+    let r,fresh=false;
+    if(station && preloaded?.station===station && (!version||preloaded.checklistVersion===version) &&
+       preloaded.language===lang && preloaded.teamCode===owner.team.code && preloaded.month===owner.month && Number(preloaded.year)===Number(owner.year)){
+      r=preloaded;preloaded=null;
+    }else{
+      try{
+        if(!navigator.onLine)throw Object.assign(Error('OFFLINE'),{isTransportError:true});
+        r=await postToWebApp(req,{retries:1});
+        if(!r?.ok)throw dklpoDataError_(r,'Gagal memuatkan borang.');
+        fresh=true;
+      }catch(e){
+        if(e.authRequired || [401,403].includes(e.httpStatus) || /AUTH|FORBIDDEN|EXPIRED|INVALID_INSPECTOR|CHECKLIST_VERSION/i.test(String(e.message)) ||
+            (!e.isTransportError && !e.retryable && navigator.onLine))throw e;
+        r=readCache(owner,station,version);
+        if(!r)throw Error(t('Sambung internet untuk menyediakan stesen ini.','Connect to prepare this station.'));
+      }
+    }
+    if(session!==owner||inspectionLang!==lang)throw Error(t('Sesi telah bertukar.','The session has changed.'));
+    if(!Array.isArray(r.assignedStations) || (station&&(!r.assignedStations.includes(station)||r.station!==station)))throw Error('INSPECTOR_STATION_FORBIDDEN');
+    if(fresh){
+      if(!station)cache(owner,'',version,{...r,station:'',checklist:[],checklistVersion:''});
+      if(r.station)cache(owner,r.station,version,r);
+    }
+    const k=dklpoWorkspaceKey_(owner.team.code,owner.month,owner.year);
+    dklpoAssignments_[k]=r.assignedStations;
+    if(fresh&&Array.isArray(r.completedStations)){
+      const base=stationKey(owner,'');
+      for(const st of [...submittedStations])if(st.startsWith(base))submittedStations.delete(st);
+      r.completedStations.forEach(st=>submittedStations.add(base+st));
+    }
+    if(r.station){
+      const ck=dklpoChecklistKey_(r.station,lang);
+      dklpoChecklistVersions_[ck]=r.checklistVersion||'';
+      dklpoChecklistViews_[ck]=r.checklist||[];
+    }
+    if(first&&r.station)preloaded=r;
+    return r;
+  }
+  async function queued(s=session){
+    const db=await openKkpasDb_();
+    return new Promise((resolve,reject)=>{
+      const tx=db.transaction('offlineQueue','readonly');
+      const request=tx.objectStore('offlineQueue').openCursor();
+      const summaries=[];
+      request.onsuccess=()=>{
+        const cursor=request.result;
+        if(!cursor)return;
+        const r=cursor.value;
+        if(r.type!=='ADHOC_V13'&&belongs(r.payload,s)){
+          summaries.push({id:r.id,status:r.status,owner:r.owner,leaseUntil:r.leaseUntil,
+            createdAt:r.createdAt,payload:{station:r.payload.station}});
+        }
+        cursor.continue();
+      };
+      tx.oncomplete=()=>resolve(summaries);
+      tx.onerror=tx.onabort=()=>reject(tx.error||Error(t('Baris gilir tidak dapat dibaca.','Could not read the queue.')));
+    });
+  }
+  function options(assigned,locked=new Set()){
+    const sel=el('stationSelect');
+    const active=assigned.filter(st=>!submittedStations.has(stationKey(session,st))&&!locked.has(st));
+    sel.replaceChildren(new Option(t('Pilih stesen','Select station'),''));
+    active.forEach(st=>sel.add(new Option(st,st)));
+    if(currentStation && active.includes(currentStation))sel.value=currentStation;
+    el('stationSelector').style.display=active.length>1?'block':'none';
+    return active;
+  }
+  function showShell(only){
+    el('pageLogin').classList.remove('active');el('pageInspection').classList.add('active');
+    el('btnLogout').style.display='block';el('pageInspection').classList.toggle('field-shell-only',only);
+  }
+  async function showPage(pickStation=false){
+    if(!session?.team || session.expiry && session.expiry<=Date.now()){showToast(t('Log masuk semula.','Sign in again.'),'error');return false;}
+    currentTeam=session.team;showShell(true);
+    const stations=el('fieldStations');
+    stations.replaceChildren();stations.hidden=true;
+    notice(t('Memuatkan tugasan…','Loading assignments…'));
+    try{
+      const [w,q]=await Promise.all([workspace('','',true),queued()]);
+      const active=options(w.assignedStations,new Set(q.map(x=>x.payload.station)));
+      if(!active.length){
+        notice(q.length?t('Lihat Hantaran saya untuk status laporan.','Open My submissions for report status.'):
+          w.assignedStations.length?t('Semua stesen selesai.','All stations completed.'):t('Tiada stesen ditugaskan.','No stations assigned.'));
+        return true;
+      }
+      const drafts=await store.tasks();
+      const openStation=async station=>{
+        if(moving)return false;
+        moving=true;
+        try{
+          const draft=drafts.find(d=>d.station===station);
+          const opened=draft?await restoreSelected(draft.submissionId||'legacy'):await loadStation(station);
+          if(opened!==true)throw Error(t('Stesen belum dapat dibuka.','Unable to open the station.'));
+          stations.hidden=true;
+          showShell(false);stopAutoSave();startAutoSave();return true;
+        }finally{moving=false;}
+      };
+      if(pickStation&&active.length>1){
+        active.forEach(station=>stations.append(button(station,()=>openStation(station))));
+        stations.hidden=false;notice(t('Pilih stesen untuk membuka borang.','Choose a station to open the form.'));
+        return true;
+      }
+      // Prefer the persisted station for this team and period.
+      const previous=localStorage.getItem('DKLPO_LAST_STATION:'+stationKey(session,''));
+      const first=active.includes(previous)?previous:active[0];
+      return await openStation(first);
+    }catch(e){notice(e.message);el('fieldRetry').hidden=false;return false;}
+  }
+  async function readyLabel(station){
+    const s=session;if(!s?.team?.code||!station)return;
+    const r=await idbGet_('kv','DKLPO_REGISTER:'+JSON.stringify([s.team.code,Number(s.year),s.month,station])).catch(()=>null);
+    if(session!==s||currentStation!==station)return;
+    const prepared=!!(readCache(s,station)?.checklistVersion && r?.value?.ok && r.value.checklistVersion===2);
+    const label=el('fieldReady');if(!label)return;
+    label.textContent=prepared?t('Borang dan daftar tersedia pada telefon ini.','Form and register available on this device.'):
+      t('Daftar luar talian belum disahkan pada telefon ini.','Offline register not yet confirmed on this device.');
+  }
+  function progress(){
+    const fields=[...document.querySelectorAll('#checklistContainer .status-select')];
+    const left=fields.filter(f=>!checklistData[f.dataset.itemKey]);
+    const b=el('fieldProgress');b.hidden=!fields.length;
+    b.textContent=(fields.length-left.length)+'/'+fields.length+' '+t('disemak','reviewed')+(left.length?' · '+t('Lihat baki','Show remaining'):'');
+    b.onclick=()=>{const f=left[0];if(!f)return;f.closest('.checklist-item')?.classList.add('open');f.focus();f.scrollIntoView({block:'center'});};
+  }
+  async function restoreSelected(id){
+    store.select(id);
+    try{
+      const ok=await restoreDraft();
+      if(ok!==true || !currentStation || (id!=='legacy' && currentSubmissionId!==id))return false;
+      showShell(false);progress();await syncPicker();return ok!==false;
+    }finally{store.select('');}
+  }
+  async function syncPicker(){
+    if(!session?.team?.code)return;
+    const assigned=getAssignedStationsForTeam(currentTeam,session.month);
+    const q=await queued();
+    options(assigned,new Set(q.filter(r=>r.status!=='EDITING').map(r=>r.payload.station)));
+    if(currentStation)el('stationSelect').value=currentStation;
+  }
+  async function drafts(){
+    if(!session?.team?.code)return false;
+    if(typeof dklpoMigrateLegacyDraft_==='function'){
+      const old=await dklpoDbRequest_(await openKkpasDb_(),'drafts','readonly','get',store.legacy);
+      if(!old)await dklpoMigrateLegacyDraft_();
+    }
+    const [list,q]=await Promise.all([store.tasks(),queued()]);
+    const pending=new Map(q.map(r=>[r.id,r.status]));
+    const valid=list.filter(d=>!pending.has(d.submissionId)||pending.get(d.submissionId)==='EDITING');
+    if(!valid.length)return false;
+    const container=el('fieldDrafts');container.replaceChildren();
+    const owner=session;
+    for(const d of valid){
+      const id=d.submissionId||'legacy';
+      const row=document.createElement('div');row.className='field-actions';
+      row.append(button(t('Sambung draf ','Resume draft ')+d.station+' · '+time(d.timestamp),()=>restoreSelected(id)));
+      if(!pending.has(d.submissionId)&&(!currentStation||id!==currentSubmissionId)){
+        const discard=button(t('Buang draf','Discard draft'),async()=>{
+          if(session!==owner || isSubmitting || moving || !confirm(t('Buang draf untuk ','Discard the draft for ')+d.station+'?'))return;
+          if(!await store.drop(id,d.station,owner,true))throw Error(t('Draf mungkin sedang dihantar. Semak Hantaran saya.','The draft may be sending. Check My submissions.'));
+          if(session!==owner)return;
+          if(!await drafts()){el('draftModal').classList.remove('active');await showPage(true);}
+        });
+        discard.setAttribute('aria-label',t('Buang draf untuk ','Discard draft for ')+d.station);
+        row.append(discard);
+      }
+      container.append(row);
+    }
+    el('draftModal').classList.add('active');
+    return true;
+  }
+  async function change(station){
+    if(moving || isSubmitting || IMSMainFire.processing() || !station || station===currentStation)return;
+    moving=true;const previous=currentStation,select=el('stationSelect');select.disabled=true;
+    try{
+      if(previous && !hasSubmittedCurrent){
+        if(await saveDraft()!==true)throw Error(t('Draf semasa belum tersimpan.','Current draft is not saved.'));
+        await IMSMainFire.persist();
+      }
+      const gps=await requireGps_('checklist');if(!gps.ok)return;
+      const list=await store.tasks();
+      const d=list.find(d=>d.station===station);
+      if(d)await restoreSelected(d.submissionId||'legacy');
+      else if(await loadStation(station)!==true)throw Error(t('Stesen belum dapat dibuka.','Unable to open station.'));
+      stopAutoSave();startAutoSave();progress();
+    }catch(e){showToast(e.message,'error');}
+    finally{select.value=currentStation||previous||'';select.disabled=false;moving=false;}
+  }
+  function displayState(row){
+    if(row.serverId)return t('Diterima pelayan','Received by server');
+    if(row.draft)return t('Draf disimpan pada telefon','Draft saved on device');
+    if(['DEAD_LETTER','NEEDS_RETRY','AUTH_REQUIRED','EDITING'].includes(row.status))return t('Perlu tindakan','Action required');
+    if(row.owner && Number(row.leaseUntil)>Date.now())return t('Sedang dihantar','Sending');
+    return navigator.onLine?t('Menunggu penghantaran','Waiting to send'):t('Menunggu internet','Waiting for internet');
+  }
+  async function history(remote=false){
+    const s=session;
+    if(!s?.team?.code||s.expiry&&s.expiry<=Date.now())return;
+    const dialog=el('fieldHistory'),list=el('fieldRows'),version=++receiptView;
+    if(!dialog.open)dialog.showModal();
+    const owns=()=>version===receiptView && session===s && dialog.open;
+    list.textContent=t('Memuatkan…','Loading…');
+    try{
+      const [receipts,queue,ds]=await Promise.all([store.receiptRows(s.team.code),queued(s),store.tasks(s)]);
+      if(!owns())return;
+      const rows=new Map();
+      for(const d of ds)rows.set(d.submissionId||'legacy',{id:d.submissionId||'legacy',station:d.station,date:d.timestamp,draft:true});
+      for(const q of queue)rows.set(q.id,{...q,station:q.payload.station,date:q.createdAt});
+      for(const r of receipts.filter(r=>belongs(r,s)))rows.set(r.id,{...r,date:r.confirmedAt});
+      const paint=()=>{
+        list.replaceChildren();
+        const entries=[...rows.values()].sort((a,b)=>new Date(b.date||0)-new Date(a.date||0));
+        if(!entries.length)list.textContent=t('Tiada hantaran untuk pasukan dan tempoh ini.','No submissions for this team and period.');
+        for(const row of entries){
+          const card=document.createElement('article'),title=document.createElement('strong'),meta=document.createElement('p');
+          title.textContent=row.station+' · '+displayState(row);
+          meta.textContent=[time(row.date),row.serverId||row.id].filter(Boolean).join(' · ');
+          card.append(title,meta);
+          if(row.draft)card.append(button(t('Sambung','Resume'),()=>{dialog.close();return switchToDraft(row.id);}));
+          else if(!row.serverId && row.status==='AUTH_REQUIRED')card.append(document.createTextNode(t('Log masuk semula dengan pasukan yang sama.','Sign in again with the same team.')));
+          else if(!row.serverId && ['DEAD_LETTER','NEEDS_RETRY','EDITING'].includes(row.status))card.append(button(t('Semak laporan','Review report'),()=>{dialog.close();return dklpoReopenInspection_(row.id);}));
+          else if(!row.serverId && !(row.owner && Number(row.leaseUntil)>Date.now()))card.append(button(t('Cuba semula','Retry'),async()=>{
+            if(typeof browserQueueRetry_==='function')await browserQueueRetry_(row.id);else await retryOfflineQueueItem_(row.id);
+            if(owns())await history();
+          }));
+          list.append(card);
+        }
+      };
+      paint();
+      if(remote && navigator.onLine && s.inspectorAuth){
+        const r=await postToWebApp({action:'getInspectorWorkspace',myReceipts:'1',teamCode:s.team.code,month:s.month,year:s.year,inspectorAuth:s.inspectorAuth},{retries:1});
+        if(!owns())return;
+        if(!r?.ok)throw Error(r?.error||t('Semakan pelayan gagal.','Server check failed.'));
+        for(const item of r.receipts||[])if(belongs(item,s) && item.serverId && !rows.get(item.id)?.serverId)rows.set(item.id,{...item,date:item.recordedAt});
+        paint();
+      }
+    }catch(e){if(owns()){const m=document.createElement('p');m.setAttribute('role','alert');m.textContent=e.message;list.append(m);}}
+  }
+  async function switchToDraft(id){
+    if(currentStation && currentSubmissionId!==id && !hasSubmittedCurrent && await saveDraft()!==true)return;
+    return restoreSelected(id);
+  }
+  async function offlineStations(){
+    const s=session,language=inspectionLang;
+    if(!s?.team?.code)return;
+    const dialog=el('fieldPrepare'),host=el('fieldPrepareRows');
+    if(!dialog.open)dialog.showModal();
+    host.replaceChildren();
+    const assigned=getAssignedStationsForTeam(s.team,s.month);
+    if(!assigned.length){host.textContent=t('Sediakan senarai tugasan dengan internet dahulu.','Load assignments online first.');return;}
+    for(const station of assigned){
+      const name=document.createElement('strong'),status=document.createElement('p'),card=document.createElement('article');
+      name.textContent=station;card.append(name,status);host.append(card);
+      const key='DKLPO_REGISTER:'+JSON.stringify([s.team.code,Number(s.year),s.month,station]);
+      const known=await idbGet_('kv',key);
+      if(session!==s||!dialog.open)return;
+      status.textContent=readCache(s,station)?.checklistVersion&&IMSMainFire.validRegistry(known?.value)?
+        t('Tersedia pada telefon','Available on device'):t('Belum tersedia','Not prepared');
+      const b=button(t('Sediakan / segarkan','Prepare / refresh'),async()=>{
+        b.disabled=true;
+        try{
+          if(!navigator.onLine)throw Error(t('Sambung internet untuk menyediakan stesen.','Connect to prepare the station.'));
+          const req={action:'getInspectorWorkspace',teamCode:s.team.code,month:s.month,year:s.year,station,inspectionLang:language,inspectorAuth:s.inspectorAuth||''};
+          const [w,r]=await Promise.all([postToWebApp(req,{retries:1}),postToWebApp({...req,fireRegistryOnly:'1'},{retries:1})]);
+          if(session!==s||inspectionLang!==language)throw Error(t('Sesi atau bahasa telah bertukar.','The session or language changed.'));
+          if(!w?.ok || w.station!==station || !w.assignedStations?.includes(station) || !w.checklistVersion || !IMSMainFire.validRegistry(r))throw Error(w?.error||r?.error||t('Daftar belum tersedia.','Register unavailable.'));
+          cache(s,station,'',w);await idbPut_('kv',{key,value:r});
+          if(!readCache(s,station)?.checklistVersion)throw Error(t('Borang tidak berjaya disimpan.','Form could not be saved.'));
+          status.textContent=t('Tersedia pada telefon','Available on device')+' · '+time(Date.now());
+          if(station===currentStation)await readyLabel(station);
+        }catch(e){status.textContent=e.message;}finally{b.disabled=false;}
+      });
+      card.append(b);
+    }
+  }
+
+  const oldLoad=loadStation;
+  loadStation=async function(station,...args){
+    const result=await oldLoad.call(this,station,...args);
+    if(result===true){
+      el('fieldRetry').hidden=true;notice('');readyLabel(station);progress();
+      try{localStorage.setItem('DKLPO_LAST_STATION:'+stationKey(session,''),station);}catch(_){}
+    }
+    return result;
+  };
+  const oldUpdate=updateChecklistByKey_;
+  updateChecklistByKey_=function(key,value){oldUpdate.call(this,key,value);progress();};
+  const oldAuto=startAutoSave;
+  startAutoSave=function(){stopAutoSave();return oldAuto.call(this);};
+  dklpoWorkspace_=workspace;showInspectionPage=showPage;checkForDraft=drafts;changeStation=change;
+  nextStation=async function(){
+    const rows=await queued(),locked=new Set(rows.map(q=>q.payload.station));
+    const station=getAssignedStationsForTeam(currentTeam,session.month).find(st=>st!==currentStation &&
+      !locked.has(st)&&!submittedStations.has(stationKey(session,st)));
+    if(station)return change(station);
+    return history();
+  };
+  el('fieldOffline').onclick=()=>offlineStations().catch(e=>showToast(e.message,'error'));
+  el('fieldRetry').onclick=()=>showPage();
+  el('fieldOpenHistory').onclick=()=>history();
+  el('fieldRefresh').onclick=()=>history(true);
+  el('fieldClose').onclick=()=>el('fieldHistory').close();
+  el('fieldOther').onclick=()=>{el('draftModal').classList.remove('active');showPage(true);};
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden && el('fieldHistory').open)void history();});
+  return {history,progress,restoreSelected,readyLabel,displayState,syncPicker,queueVisible};
+})();
+
 const IMSMainFire=(()=>{
  const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const tr=(ms,en)=>(typeof inspectionLang!=='undefined'?inspectionLang:typeof currentLang!=='undefined'?currentLang:'ms')==='en'?en:ms;
- const clone=v=>JSON.parse(JSON.stringify(v));
+ // Copy the mutable metadata. Immutable image strings are shared until IndexedDB packs them.
+ function clone(v){
+  if(Array.isArray(v))return v.map(clone);
+  if(v&&typeof v==='object')return Object.fromEntries(Object.entries(v).map(([k,item])=>[k,clone(item)]));
+  return v;
+ }
+ let editingPhoto=0, attachAsset='';
+ const registryKey=c=>'DKLPO_REGISTER:'+JSON.stringify([c.teamCode,Number(c.year),c.month,c.station]);
  const context=()=>({teamCode:currentTeam?.code||'',inspectorName:currentTeam?.name||'',station:currentStation||'',month:session?.month||'',year:session?.year||new Date().getFullYear(),inspectorAuth:session?.inspectorAuth||'',submissionId:currentSubmissionId||''});
  const scope=c=>[c.teamCode,c.year,c.month,c.station,c.submissionId].join('|');
  const key=c=>'IMS_MAIN_FIRE_V1:'+scope(c);
@@ -3976,6 +4554,7 @@ const IMSMainFire=(()=>{
    const input=el.querySelector(`[data-imf-location="${i}"]`);
    if(!input)continue;
    photo.location=input.value;
+   if(i!==editingPhoto)continue;
    const obsolete=photoLinks(photo).filter(id=>!items.has(id));
    const checked=[...el.querySelectorAll(`[data-imf-photo="${i}"]:checked`)].map(node=>node.value);
    photo.assetIds=[...obsolete,...checked];
@@ -4006,6 +4585,12 @@ const IMSMainFire=(()=>{
     <label class="imf-field">${tr('Catatan / sebab (wajib jika bukan Baik)','Remarks / reason (required unless Good)')}
       <textarea class="form-control" data-imf-note="${esc(item.id)}" maxlength="2000">${esc(item.remarks||'')}</textarea>
     </label>
+    <button class="btn-secondary" type="button" data-imf-attach="${esc(item.id)}">${tr('Tambah bukti','Add evidence')} · ${esc(asset.code||item.id)}</button>
+    ${attachAsset===item.id?`<div class="imf-photo-actions" data-imf-picker>
+      <button type="button" class="btn-secondary" data-imf-pick="camera" data-attach-id="${esc(item.id)}">${tr('Kamera','Camera')}</button>
+      <button type="button" class="btn-secondary" data-imf-pick="gallery" data-attach-id="${esc(item.id)}">${tr('Galeri','Gallery')}</button>
+      ${state.fire.photos.map((photo,i)=>photoLinks(photo).includes(item.id)?'':`<button type="button" class="btn-secondary" data-imf-existing="${i}">${tr('Padankan','Link')} ${photoName(i)}</button>`).join('')}
+    </div>`:''}
   </fieldset>`;
  }
 
@@ -4022,7 +4607,9 @@ const IMSMainFire=(()=>{
       <legend>${tr('Peralatan yang kelihatan dalam gambar ini','Equipment visible in this photo')}</legend>
       ${hasObsoleteLinks?`<p>${tr('Padanan lama merujuk peralatan yang tiada dalam daftar semasa.','Previous links refer to equipment missing from the current register.')}</p>
         <button class="btn-secondary" type="button" data-imf-clear-links="${index}">${tr('Buang padanan lama','Remove obsolete links')}</button>`:''}
-      ${[...assets.values()].map(asset=>`<label class="imf-option">
+      <p data-imf-chosen>${esc(matched.filter(id=>assets.has(id)).map(id=>assets.get(id).code||id).join(', ')||tr('Belum dipadankan','Not linked'))}</p>
+      ${index!==editingPhoto?`<button type="button" class="btn-secondary" data-imf-edit="${index}">${tr('Ubah padanan','Edit links')}</button>`:
+      [...assets.values()].map(asset=>`<label class="imf-option">
         <input type="checkbox" data-imf-photo="${index}" value="${esc(asset.id)}" ${matched.includes(asset.id)?'checked':''}> ${esc(asset.code||asset.id)}
       </label>`).join('')}
     </fieldset>
@@ -4030,6 +4617,15 @@ const IMSMainFire=(()=>{
   </fieldset>`;
  }
 
+ function coverage(){
+  if(!state)return '';
+  const linked=new Set(state.fire.photos.flatMap(photoLinks));
+  const assets=[...assetIndex(state.registry).values()];
+  const missing=assets.filter(a=>!linked.has(a.id));
+  const codes=missing.map(a=>a.code||a.id).join(', ');
+  return (assets.length-missing.length)+'/'+assets.length+' '+tr('peralatan ada bukti','equipment with evidence')+
+    (codes?' · '+tr('Belum dipadankan','Not linked')+' — '+codes:'');
+ }
  function render(){
   const el=root();
   issueField=null;
@@ -4057,6 +4653,7 @@ const IMSMainFire=(()=>{
   const assets=assetIndex(registry);
   el.innerHTML=`${heading()}${notice}
     <p>${tr('Semak semua peralatan dan padankan gambar bukti. Satu gambar boleh meliputi beberapa peralatan jika semuanya jelas kelihatan.','Inspect all equipment and link photo evidence. One photo can cover several units if all are clearly visible.')}</p>
+    <p id="imfCoverage" role="status" aria-live="polite">${esc(coverage())}</p>
     ${f.items.map(item=>renderEquipment(item,assets.get(item.id),registry)).join('')}
     <section data-imf-evidence aria-labelledby="imfEvidenceTitle">
       <h4 id="imfEvidenceTitle">${tr('Gambar bukti wajib','Photo evidence required')} · ${f.photos.length}/${maxPhotos}</h4>
@@ -4089,7 +4686,13 @@ const IMSMainFire=(()=>{
   try{c=context();}catch{return;}
   if(!c.station||!c.teamCode||!c.submissionId)return;
   const currentScope=scope(c);
-  if(loading?.scope===currentScope)return loading.promise;
+  if(loading?.scope===currentScope){
+   const prior=loading;
+   if(!force||prior.force)return prior.promise;
+   await prior.promise;
+   if(scope(context())===currentScope)return load(true);
+   return;
+  }
   const sameForm=activeForm(state)&&validRegistry(state.registry);
   if(!force&&sameForm)return;
   const ticket=++sequence;
@@ -4100,17 +4703,27 @@ const IMSMainFire=(()=>{
    if(sameForm){
     status(tr('Memuatkan daftar peralatan…','Loading equipment register…'));
    }else{
-    state=null;
+    state=null; attachAsset=''; editingPhoto=0;
     render();
    }
-   const record=await origGet('kv',key(c)).catch(()=>null);
+   let record=await origGet('kv',key(c));
+   if(!record && typeof DklpoDraftStore!=='undefined'){
+    const main=await origGet('drafts',DklpoDraftStore.legacy);
+    if(main?.fireEvidence?.context && scope(main.fireEvidence.context)===currentScope)record={value:main.fireEvidence};
+   }
    if(!isCurrent())return;
    const value=record?.value,cached=value?.context&&scope(value.context)===currentScope?value:null;
    let registry=sameForm?state?.registry:cached?.registry;
+   if(!validRegistry(registry)){
+    const saved=await origGet('kv',registryKey(c)).catch(()=>null);
+    if(saved?.key===registryKey(c))registry=saved.value;
+   }
+   if(!isCurrent())return;
    const cachedValid=validRegistry(registry);
    let fromCache=true;
    if(force||!cachedValid||navigator.onLine){
     try{
+     if(!navigator.onLine)throw Object.assign(Error(tr('Tiada daftar sah pada telefon. Sediakan stesen apabila ada internet.','No valid register on this device. Prepare this station when online.')),{isTransportError:true});
      const fresh=await postToWebApp({action:'getInspectorWorkspace',fireRegistryOnly:'1',forceFireRegistry:force?'1':'0',...c},{timeoutMs:cachedValid?12000:60000,retries:1});
      if(!validRegistry(fresh)){
       const error=Error(fresh?.error||'FIRE_UPDATE_IMS_FIRST: Daftar peralatan versi 2 diperlukan.');
@@ -4119,10 +4732,16 @@ const IMSMainFire=(()=>{
      }
      registry=fresh;
      fromCache=false;
+     if(typeof openKkpasDb_==='function')await origPut('kv',{key:registryKey(c),value:fresh}).catch(()=>{});
     }catch(error){
      if(!isCurrent())return;
      if(!cachedValid||!canUseCachedRegistry(error)){
       if(sameForm&&state)await persist().catch(storageError=>status(storageError.message,true));
+      if(!isCurrent())return;
+      if(typeof idbDelete_==='function'&&!canUseCachedRegistry(error)){
+       await idbDelete_('kv',registryKey(c)).catch(()=>{});
+       if(cached){const retained={...cached};delete retained.registry;await origPut('kv',{key:key(c),value:retained});}
+      }
       if(!isCurrent())return;
       state=null;
       issueField=null;
@@ -4155,12 +4774,16 @@ const IMSMainFire=(()=>{
    };
    render();
    await persist();
+   if(typeof DklpoField!=='undefined')void DklpoField.readyLabel(c.station);
   })().catch(error=>{
-   if(isCurrent())status(error.message,true);
+   if(isCurrent()){
+    if(state)status(error.message,true);
+    else root().innerHTML=heading()+'<p role="alert">'+esc(error.message)+'</p><button type="button" class="btn-secondary" data-imf-refresh>'+tr('Cuba semula','Retry')+'</button>';
+   }
   }).finally(()=>{
    if(loading?.promise===promise)loading=null;
   });
-  loading={scope:currentScope,promise};
+  loading={scope:currentScope,promise,force};
   return promise;
  }
 
@@ -4254,7 +4877,10 @@ const IMSMainFire=(()=>{
   if(issueField?.contains(input))clearIssue();
   return true;
  }
- const saveForm=()=>persist().catch(error=>status(error.message,true));
+ const saveForm=async()=>{
+  try{await persist();if(typeof scheduleDraftSave_==='function')scheduleDraftSave_();}
+  catch(error){status(error.message,true);}
+ };
  document.addEventListener('input',e=>{
   if(!editedField(e.target))return;
   clearTimeout(persistTimer);
@@ -4262,7 +4888,15 @@ const IMSMainFire=(()=>{
  });
  document.addEventListener('change',async e=>{
   if(e.target.matches('[data-imf-files]'))await addPhotos(e.target);
-  else if(editedField(e.target))await saveForm();
+  else if(editedField(e.target)){
+   await saveForm();
+   if(e.target.matches('[data-imf-photo]')){
+    const label=root().querySelector('#imfCoverage');
+    if(label)label.textContent=coverage();
+    const selected=e.target.closest('fieldset')?.querySelector?.('[data-imf-chosen]');
+    if(selected)selected.textContent=photoLinks(state.fire.photos[editingPhoto]).map(id=>assetIndex(state.registry).get(id)?.code||id).join(', ')||tr('Belum dipadankan','Not linked');
+   }
+  }
  });
  document.addEventListener('visibilitychange',()=>{
   if(document.hidden&&persistTimer!==null&&activeForm(state))void saveForm();
@@ -4273,6 +4907,8 @@ const IMSMainFire=(()=>{
   input.value='';
   if(!activeForm(state)||busy||!files.length)return;
   const current=state,added=[];
+  const assetId=input.dataset.attachId||'';
+  delete input.dataset.attachId;
   let failure=null;
   busy++;
   try{
@@ -4282,7 +4918,7 @@ const IMSMainFire=(()=>{
     const source=await readFileAsDataUrl(file);
     const image=await dklpoCompressImage_(source.replace(/^data:image\/jpg;/,'data:image/jpeg;'),180000,1400);
     if(!activeForm(current))return;
-    added.push({data:image.dataUrl,location:current.context.station.trim().slice(0,160),assetIds:[]});
+    added.push({data:image.dataUrl,location:current.context.station.trim().slice(0,160),assetIds:assetId&&assetIndex(current.registry).has(assetId)?[assetId]:[]});
    }
   }catch(error){
    failure=error;
@@ -4292,7 +4928,9 @@ const IMSMainFire=(()=>{
   if(!activeForm(current))return;
   if(added.length){
    collect();
+   editingPhoto=current.fire.photos.length;
    current.fire.photos.push(...added);
+   attachAsset='';
    render();
    await saveForm();
   }
@@ -4305,12 +4943,32 @@ const IMSMainFire=(()=>{
    return;
   }
   if(!activeForm(state))return;
+  const attach=e.target.closest('[data-imf-attach]');
+  if(attach){
+   collect();attachAsset=attach.dataset.imfAttach;render();
+   root().querySelector('[data-imf-picker] button')?.focus();return;
+  }
+  if(e.target.matches('[data-imf-edit]')){
+   collect();editingPhoto=Number(e.target.dataset.imfEdit);render();
+   root().querySelector(`[data-imf-photo="${editingPhoto}"]`)?.focus?.();return;
+  }
+  if(e.target.matches('[data-imf-existing]')){
+   const f=collect().fire,photo=f.photos[Number(e.target.dataset.imfExisting)];
+   if(photo&&assetIndex(state.registry).has(attachAsset)){
+    photo.assetIds=[...new Set([...photoLinks(photo),attachAsset])];
+    attachAsset='';render();await saveForm();
+   }
+   return;
+  }
   const pick=e.target.closest('[data-imf-pick]');
   if(pick?.dataset?.imfPick){
    const evidence=root().querySelector('[data-imf-evidence]');
    if(busy)showIssue(fieldError(tr('Tunggu gambar selesai diproses.','Wait for photos to finish processing.'),evidence));
    else if(state.fire.photos.length>=maxPhotos)showIssue(fieldError(tr('Maksimum 12 gambar kebakaran.','Maximum 12 fire evidence photos.'),evidence));
-   else root().querySelector(`[data-imf-files="${pick.dataset.imfPick}"]`)?.click();
+   else{
+    const input=root().querySelector(`[data-imf-files="${pick.dataset.imfPick}"]`);
+    if(input){input.dataset.attachId=pick.dataset.attachId||'';input.click();}
+   }
    return;
   }
   if(e.target.matches('[data-imf-ack]')){
@@ -4318,7 +4976,9 @@ const IMSMainFire=(()=>{
    state.registryChanged=false;
   }else if(e.target.matches('[data-imf-remove]')){
    collect();
-   state.fire.photos.splice(Number(e.target.dataset.imfRemove),1);
+   const index=Number(e.target.dataset.imfRemove);
+   state.fire.photos.splice(index,1);
+   editingPhoto=Math.max(0,Math.min(editingPhoto-(index<editingPhoto?1:0),state.fire.photos.length-1));
   }else if(e.target.matches('[data-imf-clear-links]')){
    const photo=collect().fire.photos[Number(e.target.dataset.imfClearLinks)];
    const assets=assetIndex(state.registry);
@@ -4331,7 +4991,7 @@ const IMSMainFire=(()=>{
  const originalLoad=loadStation;
  loadStation=async function(...args){
   const result=await originalLoad.apply(this,args);
-  if(result!==false&&!restoringDraft)await load();
+  if(result===true&&!restoringDraft)void load();
   return result;
  };
  const originalRestore=restoreDraft;
@@ -4340,7 +5000,7 @@ const IMSMainFire=(()=>{
   let result;
   try{result=await originalRestore.apply(this,args);}
   finally{restoringDraft--;}
-  await load();
+  if(currentSubmissionId)void load();
   return result;
  };
  const originalSubmit=submitInspection;
@@ -4356,7 +5016,7 @@ const IMSMainFire=(()=>{
  };
  if(typeof buildInspectionPayload_==='function'){const old=buildInspectionPayload_;buildInspectionPayload_=function(...args){return {...old.apply(this,args),fire:JSON.stringify(snapshot())};};}
  if(typeof browserQueueSave_==='function'){const old=browserQueueSave_;browserQueueSave_=async function(record){if(record.type==='INSPECTION'&&!record.payload.fire){if(record.id!==context().submissionId)throw Error('FIRE_DRAFT_SCOPE_MISMATCH');record.payload.fire=JSON.stringify(snapshot());}return old.call(this,record);};}
- const originalIdbPut=idbPut_;idbPut_=async function(store,value,...rest){if(store==='drafts'&&state&&scope(state.context)===scope(context())){await persist();value={...value,fireEvidence:clone(collect())};}if(store==='offlineQueue'&&value?.payload?.action==='submitInspection'&&!value.payload.fire){if(value.payload.clientSubmissionId!==context().submissionId)throw Error('FIRE_DRAFT_SCOPE_MISMATCH');value={...value,payload:{...value.payload,fire:JSON.stringify(snapshot())}};}return originalIdbPut.call(this,store,value,...rest);};
+ const originalIdbPut=idbPut_;idbPut_=async function(store,value,...rest){if(store==='drafts'&&state&&value.submissionId===state.context.submissionId&&activeForm(state)){value={...value,fireEvidence:clone(collect())};}if(store==='offlineQueue'&&value?.payload?.action==='submitInspection'&&!value.payload.fire){if(value.payload.clientSubmissionId!==context().submissionId)throw Error('FIRE_DRAFT_SCOPE_MISMATCH');value={...value,payload:{...value.payload,fire:JSON.stringify(snapshot())}};}return originalIdbPut.call(this,store,value,...rest);};
  const originalLanguage=setLanguage;setLanguage=function(...args){if(state)collect();const result=originalLanguage.apply(this,args);if(state)render();return result;};
 
  // Upgrade only a legacy payload whose complete equipment/checklist still
@@ -4376,6 +5036,7 @@ const IMSMainFire=(()=>{
  function queueBusy(row){return row&&(row.status==='SENDING'||row.status==='SYNCING'||row.status==='DIRECT_SENDING')&&(Number(row.leaseUntil)>Date.now()||Date.now()-Date.parse(row.lastAttemptAt||'')<120000);}
  async function repairQueuedFire(id){
   const row=await origGet('offlineQueue',id);if(!row||row.payload?.action!=='submitInspection'||queueBusy(row))return;
+  if(typeof DklpoField!=='undefined'&&!DklpoField.queueVisible(row))return;
   let f;try{f=typeof row.payload.fire==='string'?JSON.parse(row.payload.fire):row.payload.fire;}catch{throw Error('INVALID_FIRE_REPORT');}
   if(f?.checklistVersion===2)return;
   const p=row.payload,c={teamCode:p.teamCode,month:p.month,year:p.year,station:p.station,inspectorAuth:p.inspectorAuth||''};
@@ -4400,7 +5061,7 @@ const IMSMainFire=(()=>{
   await origPut('kv',{key:key(c),value:{context:c,fire:clone(value),registry:registry,registryChanged:true}});
   await load(navigator.onLine);return {ready:!!state};
  }
- return {load,validate,snapshot,persist,upgradeLegacyFire,importQueuedFire};
+ return {load,validate,snapshot,persist,upgradeLegacyFire,importQueuedFire,validRegistry,processing:()=>busy>0};
 })();
 
 </script>
@@ -4498,6 +5159,43 @@ async function dklpoUploadPool_(items,limit,job){
 }
 function dklpoUploadTransient_(e){return e?.retryable===true||e?.networkError===true||/RATE_LIMIT|SERVER_BUSY|BACKEND_UNAVAILABLE|GATEWAY_FAILURE|429|timeout|Failed to fetch|NetworkError/i.test(String(e?.message||e?.error||''));}
 /*! © Ennedey 2026. Atomic queue ownership and bounded parallel photo uploads. */
+// Commit the server acknowledgement and release the leased queue item together.
+function dklpoFinishInspection_(db,record,response) {
+  if (!response?.ok || !response.id || !record?.owner) throw Error('SUBMISSION_RECEIPT_MISSING');
+  const p=record.payload;
+  if (!p?.teamCode || !p.station || !p.month || !p.year) throw Error('INVALID_RECEIPT_SCOPE');
+  return new Promise((resolve,reject)=>{
+    const tx=db.transaction(['offlineQueue','kv','drafts'],'readwrite');
+    const queue=tx.objectStore('offlineQueue'),kv=tx.objectStore('kv'),drafts=tx.objectStore('drafts');
+    let committed=false;
+    const get=queue.get(record.id);
+    get.onsuccess=()=>{
+      const row=get.result;
+      if (!row || row.owner!==record.owner || row.payload?.teamCode!==p.teamCode ||
+          row.payload.station!==p.station || row.payload.month!==p.month || Number(row.payload.year)!==Number(p.year)) return;
+      const value={id:record.id,serverId:String(response.id),teamCode:p.teamCode,station:p.station,month:p.month,year:Number(p.year),
+        confirmedAt:response.confirmedAt || new Date().toISOString()};
+      kv.put({key:'DKLPO_ACK:'+encodeURIComponent(p.teamCode)+':'+record.id,value});
+      queue.delete(record.id);
+      const prefix='DKLPO_PHOTO:'+encodeURIComponent(record.id)+':';
+      kv.delete(IDBKeyRange.bound(prefix,prefix+'\uffff'));
+      kv.delete('IMS_MAIN_FIRE_V1:'+ [p.teamCode,p.year,p.month,p.station,record.id].join('|'));
+      const req=drafts.openCursor();
+      req.onsuccess=()=>{
+        const cursor=req.result;
+        if (!cursor) return;
+        const d=cursor.value;
+        if (d.submissionId===record.id && d.station===p.station && d.session?.team?.code===p.teamCode &&
+            d.session.month===p.month && Number(d.session.year)===Number(p.year)) cursor.delete();
+        cursor.continue();
+      };
+      committed=true;
+    };
+    tx.oncomplete=()=>resolve(committed);
+    tx.onerror=tx.onabort=()=>reject(tx.error||Error('RECEIPT_SAVE_FAILED'));
+  });
+}
+
 async function dklpoSwChange_(id,change){
  const db=await openDb_();let result=null;
  await new Promise((resolve,reject)=>{const tx=db.transaction('offlineQueue','readwrite'),store=tx.objectStore('offlineQueue'),request=store.get(id);
@@ -4542,7 +5240,7 @@ async function syncOne_(record){
   record.uploadedPhotoUrls=uploaded;await checkpoint();
   const payload=adhoc?{...p,issueAction:p.issueAction||p.action||'',action:'submitAdhocFinding',photos:JSON.stringify(uploaded)}:{...p,action:'submitInspection',clientSubmissionId:p.clientSubmissionId||record.id,offlineQueuedAt:record.createdAt||'',syncAttempt:record.attempts,checklist:typeof p.checklist==='string'?p.checklist:JSON.stringify(p.checklist||[]),photos:JSON.stringify(uploaded),findings:typeof p.findings==='string'?p.findings:JSON.stringify(p.findings||[])};
   const result=await formPost_(payload);if(adhoc?!result?.findingId:!result?.id)throw syncError_('SUBMISSION_RECEIPT_MISSING',true);
-  const removed=await dklpoSwChange_(record.id,row=>row?.owner===record.owner?false:null);if(!removed)throw Error('QUEUE_LEASE_LOST');
+  const removed=adhoc?await dklpoSwChange_(record.id,row=>row?.owner===record.owner?false:null):await dklpoFinishInspection_(await openDb_(),record,result);if(!removed)throw Error('QUEUE_LEASE_LOST');
   await progress('success',photos.length);await broadcast_({type:adhoc?'KKPAS_ADHOC_SYNC_SUCCESS':'KKPAS_SYNC_SUCCESS',station:p.station,id:result.id||'',clientSubmissionId:record.id,findingId:result.findingId||''});
   try{await self.registration.showNotification(adhoc?'Laporan NCR/CAR/PAR Berjaya':'KKPAS Sync Berjaya',{body:p.station+' • '+(result.id||result.findingId||''),tag:'dklpo-'+record.id,data:{url:'./'}});}catch(_){}
   return {ok:true};
@@ -4652,7 +5350,7 @@ async function dklpoReopenInspection_(id){
   const stationKey=[draft.session.year,draft.session.month,draft.session.team.code,draft.station].join('-');
   submittedStations.delete(stationKey);try{localStorage.setItem('dklpo_submitted_stations',JSON.stringify([...submittedStations]));}catch(_){}
   session=draft.session;hasSubmittedCurrent=false;stopGeoDistanceWatch_();dklpoGpsWindow_=[];dklpoGpsWindowSince_=Date.now();
-  await restoreDraft();
+  if(typeof DklpoField!=='undefined')await DklpoField.restoreSelected(draft.submissionId);else await restoreDraft();
   if(currentStation!==draft.station||currentSubmissionId!==id)throw Error('Borang belum dapat dipulihkan. Sambung semula melalui Draf atau cuba butang ini semula.');
   if(get.payload.fire)await IMSMainFire.importQueuedFire(dklpoDecode_(get.payload.fire,null));
   document.querySelectorAll('.modal.active').forEach(el=>{if(el.id!=='draftModal')el.classList.remove('active');});
@@ -4677,10 +5375,9 @@ if(typeof browserQueueRender_==='function'){
 const dklpoProgressBeforeStatus_=dklpoShowProgress_;
 dklpoShowProgress_=function(id,phase,...rest){dklpoProgressBeforeStatus_.call(this,id,phase,...rest);if(phase==='success')dklpoConfirmedStatus_(id);};
 function dklpoConfirmedStatus_(id){
- let el=document.getElementById('dklpoConfirmedReport');if(!el){el=document.createElement('aside');el.id='dklpoConfirmedReport';el.style.cssText='position:fixed;bottom:185px;left:12px;right:12px;max-width:560px;margin:auto;z-index:981;padding:16px;border:1px solid #10b981;border-radius:12px;background:#052e25;color:white;font:14px system-ui';document.body.append(el);}
- el.replaceChildren();const text=document.createElement('p');text.textContent='Pemeriksaan berjaya diterima dan disimpan dalam sistem. Sila semak status terkini laporan anda melalui pautan di bawah. ID: '+id+'. Kata laluan Viewer: Dklpo1234';
- const link=document.createElement('a');link.href='https://ennedey.app/view_laporan_pemeriksaan';link.target='_blank';link.rel='noopener noreferrer';link.textContent='Semak Status Pemeriksaan';link.style.cssText='display:inline-block;padding:10px;background:#10b981;border-radius:8px;color:#052e25;font-weight:700';
- const close=document.createElement('button');close.textContent='Tutup';close.type='button';close.style.marginLeft='10px';close.onclick=()=>el.remove();el.append(text,link,close);
+ if(!id||!session?.team?.code)return;
+ const dialog=document.getElementById('fieldHistory');
+ if(dialog?.open)void DklpoField.history();
 }
 if('serviceWorker'in navigator)navigator.serviceWorker.addEventListener('message',e=>{if(e.data?.type==='KKPAS_SYNC_SUCCESS')dklpoConfirmedStatus_(e.data.id||e.data.clientSubmissionId||'');});
 
