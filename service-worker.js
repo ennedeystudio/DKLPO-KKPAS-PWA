@@ -55,12 +55,12 @@ function dklpoDbRequest_(db, store, mode, method, value, key) {
 }
 
 const CACHE_PREFIX = 'kkpas-inspector-' + encodeURIComponent(self.registration.scope) + '-';
-const CACHE_NAME = CACHE_PREFIX + 'comfort-20261124-fire-r2';
+const CACHE_NAME = CACHE_PREFIX + 'comfort-20261125-field-r3';
 const APP_SHELL = ['./', './index.html', './manifest.json'];
 
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE_NAME).then(cache => Promise.all(
-    APP_SHELL.map(url => cache.add(url))
+    APP_SHELL.map(url => cache.add(new Request(new URL(url, self.registration.scope), {cache:'reload'})))
   )));
 });
 
@@ -77,7 +77,11 @@ self.addEventListener('fetch', event => {
   if (url.origin !== self.location.origin || !url.href.startsWith(self.registration.scope)) return;
   if(request.headers.has('Authorization')||/^\/(?:api|session|pic-session|client-config)(?:\/|$)/.test(url.pathname)||url.searchParams.has('action'))return;
   if(request.mode!=='navigate'&&!/\.(?:html|css|js|json|png|jpe?g|webp|svg|ico|woff2?)$/i.test(url.pathname))return;
-  event.respondWith(fetch(request).then(response => {
+  // Only the public HTML shell served by this worker can use cache-first navigation.
+  const indexUrl = new URL('./index.html', self.registration.scope).href;
+  const shellNavigation = request.mode === 'navigate' && !url.search &&
+    (url.href === self.registration.scope || url.href === indexUrl);
+  const fromNetwork = () => fetch(request).then(response => {
     if (response && response.ok) {
       const copy = response.clone();
       event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.put(request, copy)).catch(() => null));
@@ -92,7 +96,15 @@ self.addEventListener('fetch', event => {
         || await cache.match(self.registration.scope) || Response.error();
     }
     return Response.error();
-  }));
+  });
+  const respond = async () => {
+    if (shellNavigation) {
+      const cached = await caches.open(CACHE_NAME).then(cache => cache.match(request)).catch(() => null);
+      if (cached) return cached;
+    }
+    return fromNetwork();
+  };
+  event.respondWith(respond());
 });
 
 const WEB_APP_URL = 'https://dklpo-pic-api.ennedeystudio.workers.dev';  
@@ -175,6 +187,43 @@ async function dklpoUploadPool_(items,limit,job){
 }
 function dklpoUploadTransient_(e){return e?.retryable===true||e?.networkError===true||/RATE_LIMIT|SERVER_BUSY|BACKEND_UNAVAILABLE|GATEWAY_FAILURE|429|timeout|Failed to fetch|NetworkError/i.test(String(e?.message||e?.error||''));}
 /*! © Ennedey 2026. Atomic queue ownership and bounded parallel photo uploads. */
+// Commit the server acknowledgement and release the leased queue item together.
+function dklpoFinishInspection_(db,record,response) {
+  if (!response?.ok || !response.id || !record?.owner) throw Error('SUBMISSION_RECEIPT_MISSING');
+  const p=record.payload;
+  if (!p?.teamCode || !p.station || !p.month || !p.year) throw Error('INVALID_RECEIPT_SCOPE');
+  return new Promise((resolve,reject)=>{
+    const tx=db.transaction(['offlineQueue','kv','drafts'],'readwrite');
+    const queue=tx.objectStore('offlineQueue'),kv=tx.objectStore('kv'),drafts=tx.objectStore('drafts');
+    let committed=false;
+    const get=queue.get(record.id);
+    get.onsuccess=()=>{
+      const row=get.result;
+      if (!row || row.owner!==record.owner || row.payload?.teamCode!==p.teamCode ||
+          row.payload.station!==p.station || row.payload.month!==p.month || Number(row.payload.year)!==Number(p.year)) return;
+      const value={id:record.id,serverId:String(response.id),teamCode:p.teamCode,station:p.station,month:p.month,year:Number(p.year),
+        confirmedAt:response.confirmedAt || new Date().toISOString()};
+      kv.put({key:'DKLPO_ACK:'+encodeURIComponent(p.teamCode)+':'+record.id,value});
+      queue.delete(record.id);
+      const prefix='DKLPO_PHOTO:'+encodeURIComponent(record.id)+':';
+      kv.delete(IDBKeyRange.bound(prefix,prefix+'\uffff'));
+      kv.delete('IMS_MAIN_FIRE_V1:'+ [p.teamCode,p.year,p.month,p.station,record.id].join('|'));
+      const req=drafts.openCursor();
+      req.onsuccess=()=>{
+        const cursor=req.result;
+        if (!cursor) return;
+        const d=cursor.value;
+        if (d.submissionId===record.id && d.station===p.station && d.session?.team?.code===p.teamCode &&
+            d.session.month===p.month && Number(d.session.year)===Number(p.year)) cursor.delete();
+        cursor.continue();
+      };
+      committed=true;
+    };
+    tx.oncomplete=()=>resolve(committed);
+    tx.onerror=tx.onabort=()=>reject(tx.error||Error('RECEIPT_SAVE_FAILED'));
+  });
+}
+
 async function dklpoSwChange_(id,change){
  const db=await openDb_();let result=null;
  await new Promise((resolve,reject)=>{const tx=db.transaction('offlineQueue','readwrite'),store=tx.objectStore('offlineQueue'),request=store.get(id);
@@ -219,9 +268,9 @@ async function syncOne_(record){
   record.uploadedPhotoUrls=uploaded;await checkpoint();
   const payload=adhoc?{...p,issueAction:p.issueAction||p.action||'',action:'submitAdhocFinding',photos:JSON.stringify(uploaded)}:{...p,action:'submitInspection',clientSubmissionId:p.clientSubmissionId||record.id,offlineQueuedAt:record.createdAt||'',syncAttempt:record.attempts,checklist:typeof p.checklist==='string'?p.checklist:JSON.stringify(p.checklist||[]),photos:JSON.stringify(uploaded),findings:typeof p.findings==='string'?p.findings:JSON.stringify(p.findings||[])};
   const result=await formPost_(payload);if(adhoc?!result?.findingId:!result?.id)throw syncError_('SUBMISSION_RECEIPT_MISSING',true);
-  const removed=await dklpoSwChange_(record.id,row=>row?.owner===record.owner?false:null);if(!removed)throw Error('QUEUE_LEASE_LOST');
+  const removed=adhoc?await dklpoSwChange_(record.id,row=>row?.owner===record.owner?false:null):await dklpoFinishInspection_(await openDb_(),record,result);if(!removed)throw Error('QUEUE_LEASE_LOST');
   await progress('success',photos.length);await broadcast_({type:adhoc?'KKPAS_ADHOC_SYNC_SUCCESS':'KKPAS_SYNC_SUCCESS',station:p.station,id:result.id||'',clientSubmissionId:record.id,findingId:result.findingId||''});
-  try{await self.registration.showNotification(adhoc?'Laporan NCR/CAR/PAR Berjaya':'KKPAS Sync Berjaya',{body:p.station+' • '+(result.id||result.findingId||'')+(adhoc?'':' — Pemeriksaan diterima sistem. Semak status terkini di ennedey.app/view_laporan_pemeriksaan. Kata laluan Viewer: Dklpo1234'),tag:'dklpo-'+record.id,data:{url:adhoc?'./':'https://ennedey.app/view_laporan_pemeriksaan'}});}catch(_){}
+  try{await self.registration.showNotification(adhoc?'Laporan NCR/CAR/PAR Berjaya':'KKPAS Sync Berjaya',{body:p.station+' • '+(result.id||result.findingId||'')+(adhoc?'':' — Pemeriksaan diterima sistem. Semak status terkini di ennedey.app/view_laporan_pemeriksaan.'),tag:'dklpo-'+record.id,data:{url:adhoc?'./':'https://ennedey.app/view_laporan_pemeriksaan'}});}catch(_){}
   return {ok:true};
  }catch(e){await progress(e.retryable===false?'review':'pending',(record.photos||[]).length);throw e;}
  finally{clearInterval(heartbeat);}
